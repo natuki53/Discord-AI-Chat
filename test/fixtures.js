@@ -20,7 +20,7 @@ export function validConfig() {
       baseUrl: 'http://127.0.0.1:11434',
       model: 'qwen3.5:4b',
       contextTokens: 8192,
-      maxOutputTokens: 500,
+      maxOutputTokens: 1024,
       timeoutMs: 60000,
       temperature: 0.7,
       keepAlive: '15m',

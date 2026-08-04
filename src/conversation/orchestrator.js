@@ -1,13 +1,15 @@
 import { safeWebFetch } from '../tools/safe-web-fetch.js';
 import { needsFreshInformation, sanitizeSearchQuery } from '../tools/web-search.js';
 
+const FINAL_ANSWER_MAX_CHARACTERS = 800;
+
 const FINAL_FORMAT = {
   type: 'object',
   additionalProperties: false,
   required: ['action', 'answer'],
   properties: {
     action: { type: 'string', enum: ['respond', 'silent'] },
-    answer: { type: 'string', maxLength: 400 },
+    answer: { type: 'string', maxLength: FINAL_ANSWER_MAX_CHARACTERS },
   },
 };
 
@@ -74,7 +76,7 @@ function recoverStructuredAnswer(content) {
     );
     if (lastSentenceEnd >= 0) recovered = recovered.slice(0, lastSentenceEnd + 1).trim();
   }
-  return { action, answer: recovered.slice(0, 400) };
+  return { action, answer: recovered.slice(0, FINAL_ANSWER_MAX_CHARACTERS) };
 }
 
 function parseFinal(content) {
@@ -287,7 +289,7 @@ export class ConversationOrchestrator {
         : `最新性が必要ですが検索に失敗しました（${searchError ?? '結果なし'}）。最新情報を推測で断定せず、確認できなかったと短く伝えてください。`
       : '今回はWeb検索をしていません。';
 
-    const userPrompt = `${context.conversation}\n\n${modeInstruction}\n\n${styleInstruction}\n\n${webInstruction}\n\nanswerは最大400文字に収め、JSON以外の文字を出さず、JSON schemaに従って返してください。`;
+    const userPrompt = `${context.conversation}\n\n${modeInstruction}\n\n${styleInstruction}\n\n${webInstruction}\n\nanswerは最大${FINAL_ANSWER_MAX_CHARACTERS}文字に収め、JSON以外の文字を出さず、JSON schemaに従って返してください。`;
     const messages = [
         { role: 'system', content: context.system },
         { role: 'user', content: userPrompt },
@@ -313,7 +315,7 @@ export class ConversationOrchestrator {
             messages[0],
             {
               role: 'user',
-              content: `${userPrompt}\n\n前回は形式に失敗しました。要点を1〜3文・最大250文字に縮め、完全なJSONを一つだけ返してください。`,
+              content: `${userPrompt}\n\n前回は形式に失敗しました。要点を1〜3文・最大500文字に縮め、完全なJSONを一つだけ返してください。`,
             },
           ],
           format: FINAL_FORMAT,

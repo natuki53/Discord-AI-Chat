@@ -36,7 +36,7 @@ export const configSchema = z
       baseUrl: z.url(),
       model: z.string().min(1),
       contextTokens: z.number().int().min(2048).max(32768).default(8192),
-      maxOutputTokens: z.number().int().min(32).max(2048).default(500),
+      maxOutputTokens: z.number().int().min(32).max(2048).default(1024),
       timeoutMs: z.number().int().min(5000).max(180000).default(60000),
       temperature: z.number().min(0).max(2).default(0.75),
       keepAlive: z.string().default('15m'),

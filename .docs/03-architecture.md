@@ -324,7 +324,7 @@ llm:
   baseUrl: http://127.0.0.1:11434
   model: qwen3.5:9b
   contextTokens: 8192
-  maxOutputTokens: 500
+  maxOutputTokens: 1024
   timeoutMs: 45000
   keepAlive: 15m
 
