@@ -49,7 +49,7 @@
 
 - 状態: 採用
 - 決定: Ollamaのchat、tool calling、structured outputを使う。
-- 実装値: `qwen3.5:4b`、context 8192、最大output 500 tokens。
+- 実装値: `qwen3.5:9b`、context 8192、最大output 500 tokens。RTX 2060ではCPU/GPU hybridで動作する。
 - 実機確認: RTX 2060 6GBへ100% GPU offloadし、約4GB VRAMで動作することを確認済み。
 
 ### D-009: Web検索はprovider adapter化する
@@ -126,7 +126,7 @@
 
 ### O-006: LLM model
 
-- 状態: `qwen3.5:4b`を採用。
+- 状態: 2026-08-04の実機比較後、`qwen3.5:9b`を採用。`qwen3.5:4b`はrollback用に保持する。
 - 実測: context 8192でRTX 2060へ100% GPU offload、Web検索込みintegration smokeに成功。
 - 残課題: 実会話での日本語品質と同時利用時latencyをlimited rolloutで観測する。
 

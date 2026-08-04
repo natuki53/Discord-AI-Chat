@@ -17,9 +17,11 @@
     "doctor": "node --env-file-if-exists=.env scripts/doctor.js",
     "register-commands": "node --env-file-if-exists=.env scripts/register-commands.js",
     "benchmark": "node scripts/benchmark-model.js",
+    "compare-models": "node scripts/compare-models.js",
     "analyze-history": "node scripts/analyze-conversation-history.js",
     "audit-internal": "node scripts/audit-internal-exposure.js",
     "security-smoke": "node scripts/internal-exposure-smoke.js",
+    "topic-smoke": "node scripts/topic-boundary-smoke.js",
     "smoke": "node scripts/integration-smoke.js",
     "quality-smoke": "node scripts/conversation-quality-smoke.js"
   },

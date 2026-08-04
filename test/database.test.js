@@ -20,6 +20,18 @@ function withDatabase(callback) {
   }
 }
 
+async function withAsyncDatabase(callback) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'discord-ai-chat-'));
+  const database = new DatabaseStore(path.join(directory, 'test.sqlite3'), validConfig());
+  database.initializeChannels();
+  try {
+    return await callback(database);
+  } finally {
+    database.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}
+
 function createSession(database) {
   return database.createSession({
     sessionId: randomUUID(),
@@ -130,6 +142,243 @@ test('topic reset後の発言は新しいsessionになる', () => {
     );
     assert.notEqual(next.sessionId, current.sessionId);
     assert.equal(next.status, 'active');
+  });
+});
+
+test('話題境界では今回の発言だけを新しいsessionへ移す', () => {
+  withDatabase((database) => {
+    const session = createSession(database);
+    const base = {
+      guildId: session.guildId,
+      channelId: session.channelId,
+      sessionId: session.sessionId,
+      authorId: '323456789012345678',
+      authorName: 'U1',
+      authorType: 'human',
+      replyToMessageId: null,
+    };
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345671',
+        content: '昨日の競馬は惜しかったね',
+        createdAt: '2026-08-04T00:00:00Z',
+      },
+      24,
+    );
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345672',
+        content: 'RTX 2060で動くモデルを教えて',
+        createdAt: '2026-08-04T00:00:01Z',
+      },
+      24,
+    );
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345673',
+        content: 'VRAMは6GBです',
+        createdAt: '2026-08-04T00:00:02Z',
+      },
+      24,
+    );
+
+    const next = database.splitSession({
+      guildId: session.guildId,
+      channelId: session.channelId,
+      previousSessionId: session.sessionId,
+      newSessionId: randomUUID(),
+      messageIds: ['223456789012345672'],
+      now: new Date('2026-08-04T00:00:02Z'),
+      retentionHours: 24,
+    });
+
+    assert.ok(next);
+    assert.equal(database.getSession(session.sessionId).status, 'closed');
+    assert.deepEqual(
+      database
+        .getRecentMessages(session.guildId, session.channelId, session.sessionId, 10)
+        .map((message) => message.content),
+      ['昨日の競馬は惜しかったね'],
+    );
+    assert.deepEqual(
+      database
+        .getRecentMessages(session.guildId, session.channelId, next.sessionId, 10)
+        .map((message) => message.content),
+      ['RTX 2060で動くモデルを教えて', 'VRAMは6GBです'],
+    );
+    assert.equal(
+      database.getChannel(session.guildId, session.channelId).activeSessionId,
+      next.sessionId,
+    );
+  });
+});
+
+test('高信頼度の別話題判定で自動的にsessionを分ける', async () => {
+  await withAsyncDatabase(async (database) => {
+    const config = validConfig();
+    const session = createSession(database);
+    const base = {
+      guildId: session.guildId,
+      channelId: session.channelId,
+      sessionId: session.sessionId,
+      authorId: '323456789012345678',
+      authorName: 'U1',
+      authorType: 'human',
+      replyToMessageId: null,
+    };
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345671',
+        content: '昨日の競馬は惜しかったね',
+        createdAt: '2026-08-04T00:00:00Z',
+      },
+      24,
+    );
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345672',
+        content: 'RTX 2060で動くモデルを教えて',
+        createdAt: '2026-08-04T00:00:01Z',
+      },
+      24,
+    );
+    let modelCalls = 0;
+    const service = new SessionService({
+      database,
+      config,
+      logger: { debug() {}, info() {}, warn() {} },
+      model: {
+        async chat() {
+          modelCalls += 1;
+          return {
+            content: JSON.stringify({
+              relation: 'new_topic',
+              confidence: 0.94,
+              currentTopic: 'ローカルAIモデル',
+            }),
+          };
+        },
+      },
+    });
+    const next = await service.maybeStartNewTopic(session.guildId, session.channelId, [
+      '223456789012345672',
+    ]);
+    assert.equal(modelCalls, 1);
+    assert.ok(next);
+    assert.notEqual(next.sessionId, session.sessionId);
+  });
+});
+
+test('明示的な続きは話題境界modelへ渡さない', async () => {
+  await withAsyncDatabase(async (database) => {
+    const config = validConfig();
+    const session = createSession(database);
+    const base = {
+      guildId: session.guildId,
+      channelId: session.channelId,
+      sessionId: session.sessionId,
+      authorId: '323456789012345678',
+      authorName: 'U1',
+      authorType: 'human',
+    };
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345671',
+        content: '昨日の競馬は惜しかったね',
+        replyToMessageId: null,
+        createdAt: '2026-08-04T00:00:00Z',
+      },
+      24,
+    );
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345672',
+        content: 'それで次はどうする？',
+        replyToMessageId: null,
+        createdAt: '2026-08-04T00:00:01Z',
+      },
+      24,
+    );
+    let modelCalls = 0;
+    const service = new SessionService({
+      database,
+      config,
+      logger: { debug() {}, info() {}, warn() {} },
+      model: {
+        async chat() {
+          modelCalls += 1;
+          throw new Error('呼ばれてはいけない');
+        },
+      },
+    });
+    const result = await service.maybeStartNewTopic(session.guildId, session.channelId, [
+      '223456789012345672',
+    ]);
+    assert.equal(result, null);
+    assert.equal(modelCalls, 0);
+    assert.equal(
+      database.getChannel(session.guildId, session.channelId).activeSessionId,
+      session.sessionId,
+    );
+  });
+});
+
+test('明示的な話題転換はmodel判定なしでsessionを分ける', async () => {
+  await withAsyncDatabase(async (database) => {
+    const config = validConfig();
+    const session = createSession(database);
+    const base = {
+      guildId: session.guildId,
+      channelId: session.channelId,
+      sessionId: session.sessionId,
+      authorId: '323456789012345678',
+      authorName: 'U1',
+      authorType: 'human',
+      replyToMessageId: null,
+    };
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345671',
+        content: '昨日の競馬は惜しかったね',
+        createdAt: '2026-08-04T00:00:00Z',
+      },
+      24,
+    );
+    database.ingestMessage(
+      {
+        ...base,
+        messageId: '223456789012345672',
+        content: 'ところでRTX 2060で動くモデルは？',
+        createdAt: '2026-08-04T00:00:01Z',
+      },
+      24,
+    );
+    let modelCalls = 0;
+    const service = new SessionService({
+      database,
+      config,
+      logger: { debug() {}, info() {}, warn() {} },
+      model: {
+        async chat() {
+          modelCalls += 1;
+          throw new Error('呼ばれてはいけない');
+        },
+      },
+    });
+    const next = await service.maybeStartNewTopic(session.guildId, session.channelId, [
+      '223456789012345672',
+    ]);
+    assert.ok(next);
+    assert.equal(modelCalls, 0);
+    assert.notEqual(next.sessionId, session.sessionId);
   });
 });
 

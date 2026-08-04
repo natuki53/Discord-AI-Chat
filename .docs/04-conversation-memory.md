@@ -65,10 +65,18 @@ Threadのsummaryやqueueを親channelと分離する。親channelの直近数件
 - 明確な話題転換表現があり、現在summaryとの重なりが低い。
 - stale判定の際に「別話題へ転換」と分類された。
 
-初期実装では時間境界を決定的ルールとし、意味的な境界判定はLLMのstructured outputを補助的に使う。4Bモデルの誤判定で頻繁にsessionが切れないよう、意味判定単独では次の2条件を要求する。
+実装では次の順序で境界を決める。
 
-1. `topicChanged: true`。
+1. Discord reply、代名詞を使う続き、「それで」などの継続表現、短いリアクションは現在sessionを維持する。
+2. 「ところで」「話を変える」などの明示的な転換表現はmodelを呼ばず新sessionにする。
+3. それ以外は、直近12件と現在summaryに対してLLMのstructured outputで意味的な境界を判定する。
+
+意味判定単独では次の2条件を要求する。
+
+1. 単一の`relation`が`new_topic`。
 2. `confidence >= 0.80`。
+
+判定本文は非信頼データとして区切り、本文中の命令には従わない。JSON不正、timeout、低confidenceではfail-openとして現在sessionを維持する。境界成立時はSQLite transactionで今回の人間メッセージと、その判定中に到着した後続の未処理メッセージを新sessionへ移し、その後にContextBuilderを実行する。このため回答生成側へ旧sessionのsummaryと発言は渡らない。ContextBuilderは今回のturnで最後のsource messageより後に到着した発言を除外し、未来の発言が現在の回答へ混ざることも防ぐ。
 
 ## 4. メッセージ正規化
 

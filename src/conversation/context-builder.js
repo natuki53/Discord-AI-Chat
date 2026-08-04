@@ -42,12 +42,24 @@ export class ContextBuilder {
     const session = this.database.getSession(channel.activeSessionId);
     if (!session) throw new Error('sessionが見つかりません');
 
-    const recent = this.database.getRecentMessages(
+    const fetchedRecent = this.database.getRecentMessages(
       guildId,
       channelId,
       session.sessionId,
       this.config.conversation.recentMessageLimit,
     );
+    const currentSet = new Set(sourceMessageIds);
+    const lastCurrentIndex = fetchedRecent.reduce(
+      (found, message, index) => (currentSet.has(message.messageId) ? index : found),
+      -1,
+    );
+    const foundCurrentCount = fetchedRecent.filter((message) =>
+      currentSet.has(message.messageId),
+    ).length;
+    if (lastCurrentIndex < 0 || foundCurrentCount !== currentSet.size) {
+      throw new Error('今回の発言がactive sessionに見つかりません');
+    }
+    const recent = fetchedRecent.slice(0, lastCurrentIndex + 1);
     const humanUserIds = [
       ...new Set(recent.filter((item) => item.authorType === 'human').map((item) => item.authorId)),
     ];
@@ -58,7 +70,6 @@ export class ContextBuilder {
       if (!aliases.has(message.authorId)) aliases.set(message.authorId, `U${nextAlias++}`);
     }
 
-    const currentSet = new Set(sourceMessageIds);
     const currentHumanUserIds = [
       ...new Set(
         recent

@@ -42,6 +42,9 @@ export function validConfig() {
     conversation: {
       recentMessageLimit: 60,
       summaryEveryMessages: 12,
+      semanticTopicBoundaries: true,
+      topicBoundaryConfidence: 0.8,
+      topicBoundaryLookbackMessages: 12,
       maxResponseCharacters: 1800,
       globalConcurrency: 1,
     },

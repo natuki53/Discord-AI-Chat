@@ -232,7 +232,25 @@ export class ConversationOrchestrator {
     const greeting = greetingText(currentText);
     if (greeting && final.action === 'respond') final.answer = `${greeting}！`;
     if (isLaughterOnly(currentText) && final.action === 'respond') {
-      final.answer = final.answer.trim().split(/\n/u)[0].slice(0, 40);
+      const laughterAnswer = final.answer
+        .trim()
+        .split(/\n/u)[0]
+        .replace(/(?:それより|ところで|話変わるけど).*$/u, '')
+        .trim()
+        .slice(0, 30);
+      final.answer = /^(?:w{1,8}|ｗ{1,8})(?:\s|[!！?？…。、]|$)/iu.test(laughterAnswer)
+        ? '草'
+        : laughterAnswer || '草';
+    }
+    if (
+      /(?:今日|きょう).{0,12}(?:占って|占ってみて|おみくじ)/u.test(currentText) &&
+      final.action === 'respond'
+    ) {
+      final.answer = final.answer
+        .replace(/^@\S+\s*/u, '')
+        .replace(/(?:明日|あした|翌日)[^。！？!\n]*(?:[。！？!]|$)/gu, '')
+        .replace(/\s{2,}/gu, ' ')
+        .trim();
     }
     if (isSelfDescriptionQuestion(currentText) && final.action === 'respond') {
       const lines = final.answer

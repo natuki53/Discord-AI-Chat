@@ -244,3 +244,39 @@ test('一般意見への回答は隣接話題を追加せず最初の一文に�
   assert.equal(result.answer, 'ギャンブルはリスクが高いと思う。');
   assert.equal(isGeneralOpinionQuestion('ギャンブルしてる人ってどう思う？'), true);
 });
+
+test('短い笑いへの回答は新しい話題を持ち出さない', async () => {
+  const orchestrator = mockOrchestrator(
+    JSON.stringify({
+      action: 'respond',
+      answer: 'あはっ！それより、今からVRで何する？',
+    }),
+  );
+  const result = await orchestrator.respond(internalExposureContext('www'), [
+    INTERNAL_EXPOSURE_MESSAGE_ID,
+  ]);
+  assert.equal(result.answer, 'あはっ！');
+});
+
+test('短い笑いを疑問形で反復しない', async () => {
+  const orchestrator = mockOrchestrator(
+    JSON.stringify({ action: 'respond', answer: 'www ってなめられてる？' }),
+  );
+  const result = await orchestrator.respond(internalExposureContext('www'), [
+    INTERNAL_EXPOSURE_MESSAGE_ID,
+  ]);
+  assert.equal(result.answer, '草');
+});
+
+test('今日の占いから不要な名前呼びと翌日の話を除く', async () => {
+  const orchestrator = mockOrchestrator(
+    JSON.stringify({
+      action: 'respond',
+      answer: '@natuki. 今夜は運気上昇中だよ✨ 明日も元気に頑張ろうね！',
+    }),
+  );
+  const result = await orchestrator.respond(internalExposureContext('今日の運勢を占って'), [
+    INTERNAL_EXPOSURE_MESSAGE_ID,
+  ]);
+  assert.equal(result.answer, '今夜は運気上昇中だよ✨');
+});

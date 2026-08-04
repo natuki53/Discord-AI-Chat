@@ -6,10 +6,11 @@
 
 - Node.js JavaScript ESM
 - Discord.jsによるGateway接続とスラッシュコマンド
-- Ollama上のローカルLLM（既定 `qwen3.5:4b`）
+- Ollama上のローカルLLM（既定 `qwen3.5:9b`、RTX 2060ではCPU/GPU hybrid）
 - チャンネル単位の連投集約と直列処理
 - SQLite WALによる24時間の短期会話記憶
 - 会話セッション要約。個人の性格や人間関係は推測・保存しません
+- 明示表現と構造化LLM判定による話題の自動分離。新しい話題へ古い会話を混ぜません
 - 本人が任意登録した自己紹介・公開リンクから、明記された活動や興味だけを回答へ反映
 - SearXNGによるアカウント不要のWeb検索
 - 参照URL付きの最新情報回答
@@ -48,6 +49,7 @@ BOT_DATABASE_PATH=data/bot.sqlite3
 ```bash
 npm run doctor
 npm run register-commands
+npm run compare-models -- qwen3.5:4b qwen3.5:9b
 npm run analyze-history -- 200
 npm run audit-internal -- 1000
 npm run security-smoke
@@ -89,6 +91,8 @@ Developer PortalのBot設定でMessage Content Intentを有効にしてくださ
 
 `/ai-status`、`/ai-privacy`と管理者によるモード変更・停止・再開・話題リセットの成功結果は、チャンネル全員に表示されます。本人情報を扱う`/ai-preferences`、`/ai-profile`、`/ai-forget`、報告内容、権限エラーは実行者だけに表示されます。
 設定・保存データ・応答モード・話題を変更した成功通知は、通常会話と区別できる色付きEmbedで表示します。
+
+返信、「それで」などの続き、短いリアクションは現在の話題を引き継ぎます。「ところで」「話を変える」などは即座に新しい会話セッションへ分離します。それ以外も、現在の発言が高信頼度で別話題と判定された場合は今回の発言だけを新セッションへ移し、古い要約と発言を回答モデルへ渡しません。判定失敗時は誤分離を避けるため現在のセッションを維持します。
 
 ## プライバシー
 

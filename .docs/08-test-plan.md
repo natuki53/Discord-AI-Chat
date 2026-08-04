@@ -85,6 +85,12 @@ fake clockで次を検証する。
 - hard stale条件ごとに`superseded`となる。
 - soft staleの再生成が1回を超えない。
 - source削除後に回答を投稿しない。
+- reply、継続表現、短い反応では意味判定modelを呼ばずsessionを維持する。
+- 明示的な話題転換では意味判定modelを呼ばず今回の発言だけを新sessionへ移す。
+- structured判定の単一`relation`が`new_topic`かつconfidence閾値以上の場合だけ新sessionへ移す。
+- JSON不正、timeout、低confidenceでは旧sessionを維持する。
+- 自動分離後のContextBuilderへ旧sessionのsummaryとmessageが混入しない。
+- 判定中に後続発言が到着しても旧sessionへ取り残されず、現在turnの回答contextにはまだ混入しない。
 
 ### 3.8 Preferences/privacy
 

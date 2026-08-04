@@ -225,6 +225,86 @@ export class DatabaseStore {
     return this.getSession(sessionId);
   }
 
+  splitSession({
+    guildId,
+    channelId,
+    previousSessionId,
+    newSessionId,
+    messageIds,
+    now,
+    retentionHours,
+  }) {
+    const uniqueMessageIds = [...new Set(messageIds)];
+    if (!uniqueMessageIds.length) return null;
+    const placeholders = uniqueMessageIds.map(() => '?').join(',');
+    const timestamp = now.toISOString();
+    const transaction = this.db.transaction(() => {
+      const channel = this.getChannel(guildId, channelId);
+      if (channel?.activeSessionId !== previousSessionId) return null;
+      const movable = this.db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM messages
+           WHERE guild_id = ? AND channel_id = ? AND session_id = ?
+             AND author_type = 'human' AND processed_at IS NULL
+             AND message_id IN (${placeholders})`,
+        )
+        .get(guildId, channelId, previousSessionId, ...uniqueMessageIds).count;
+      if (movable !== uniqueMessageIds.length) return null;
+      const boundary = this.db
+        .prepare(
+          `SELECT created_at, message_id FROM messages
+           WHERE guild_id = ? AND channel_id = ? AND session_id = ?
+             AND author_type = 'human' AND message_id IN (${placeholders})
+           ORDER BY created_at ASC, message_id ASC LIMIT 1`,
+        )
+        .get(guildId, channelId, previousSessionId, ...uniqueMessageIds);
+
+      this.db
+        .prepare("UPDATE conversation_sessions SET status = 'closed' WHERE session_id = ?")
+        .run(previousSessionId);
+      this.db
+        .prepare(
+          `INSERT INTO conversation_sessions
+           (session_id, guild_id, channel_id, started_at, last_activity_at, status, expires_at)
+           VALUES (?, ?, ?, ?, ?, 'active', ?)`,
+        )
+        .run(
+          newSessionId,
+          guildId,
+          channelId,
+          timestamp,
+          timestamp,
+          plusHours(now, retentionHours),
+        );
+      this.db
+        .prepare(
+          `UPDATE messages SET session_id = ?
+           WHERE guild_id = ? AND channel_id = ? AND session_id = ?
+             AND author_type = 'human' AND processed_at IS NULL
+             AND (created_at > ? OR (created_at = ? AND message_id >= ?))`,
+        )
+        .run(
+          newSessionId,
+          guildId,
+          channelId,
+          previousSessionId,
+          boundary.created_at,
+          boundary.created_at,
+          boundary.message_id,
+        );
+      this.db
+        .prepare(
+          `UPDATE channels
+           SET active_session_id = ?, version = version + 1, updated_at = ?
+           WHERE guild_id = ? AND channel_id = ?`,
+        )
+        .run(newSessionId, timestamp, guildId, channelId);
+      return newSessionId;
+    });
+    const result = transaction();
+    return result ? this.getSession(result) : null;
+  }
+
   getSession(sessionId) {
     if (!sessionId) return null;
     const row = this.db
@@ -382,9 +462,9 @@ export class DatabaseStore {
            FROM messages
            WHERE guild_id = ? AND channel_id = ? AND session_id = ?
              AND deleted_at IS NULL AND content IS NOT NULL
-           ORDER BY created_at DESC
+           ORDER BY created_at DESC, message_id DESC
            LIMIT ?
-         ) ORDER BY created_at ASC`,
+         ) ORDER BY created_at ASC, message_id ASC`,
       )
       .all(guildId, channelId, sessionId, limit)
       .map((row) => ({

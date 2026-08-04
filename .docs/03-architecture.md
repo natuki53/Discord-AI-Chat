@@ -322,7 +322,7 @@ discord:
 llm:
   provider: ollama
   baseUrl: http://127.0.0.1:11434
-  model: TO_BE_SELECTED_BY_BENCHMARK
+  model: qwen3.5:9b
   contextTokens: 8192
   maxOutputTokens: 500
   timeoutMs: 45000
@@ -341,6 +341,11 @@ privacy:
   messageRetentionHours: 24
   sessionSummaryRetentionHours: 24
   webCacheRetentionHours: 6
+
+conversation:
+  semanticTopicBoundaries: true
+  topicBoundaryConfidence: 0.8
+  topicBoundaryLookbackMessages: 12
 
 logging:
   level: info
@@ -364,6 +369,7 @@ sequenceDiagram
     participant D as Discord
     participant I as Ingest
     participant Q as TurnScheduler
+    participant B as TopicBoundary
     participant C as ContextBuilder
     participant O as Orchestrator
     participant L as Ollama
@@ -374,6 +380,10 @@ sequenceDiagram
     I->>S: message upsert + pending job
     I->>Q: enqueue(messageId)
     Q->>Q: debounce / coalesce
+    Q->>B: classify current vs recent
+    alt explicit or high-confidence new topic
+        B->>S: split session + move current messages
+    end
     Q->>C: build(turnIds, version)
     C->>S: recent messages + summary + preferences
     C-->>O: bounded context + snapshot

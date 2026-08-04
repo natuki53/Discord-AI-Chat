@@ -201,6 +201,12 @@ export class DiscordBot {
     let jobId;
     let typingTimer;
     try {
+      await this.sessionService.maybeStartNewTopic(
+        guildId,
+        channelId,
+        messageIds,
+        controller.signal,
+      );
       let context = this.contextBuilder.build({ guildId, channelId, sourceMessageIds: messageIds });
       if (context.mode === 'paused') {
         this.database.markMessagesProcessed(messageIds);

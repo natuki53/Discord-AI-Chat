@@ -58,6 +58,9 @@ export const configSchema = z
     conversation: z.object({
       recentMessageLimit: z.number().int().min(10).max(200).default(60),
       summaryEveryMessages: z.number().int().min(5).max(50).default(12),
+      semanticTopicBoundaries: z.boolean().default(true),
+      topicBoundaryConfidence: z.number().min(0.5).max(1).default(0.8),
+      topicBoundaryLookbackMessages: z.number().int().min(4).max(30).default(12),
       maxResponseCharacters: z.number().int().min(100).max(1900).default(1800),
       globalConcurrency: z.number().int().min(1).max(2).default(1),
     }),

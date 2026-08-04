@@ -6,6 +6,7 @@ import { OllamaClient } from '../src/ai/ollama-client.js';
 import { loadConfig } from '../src/config/load-config.js';
 import { ContextBuilder } from '../src/conversation/context-builder.js';
 import { ConversationOrchestrator } from '../src/conversation/orchestrator.js';
+import { SessionService } from '../src/conversation/session-service.js';
 import { createLogger } from '../src/observability/logger.js';
 import { DatabaseStore } from '../src/storage/database.js';
 import { SearxngSearchProvider } from '../src/tools/web-search.js';
@@ -19,7 +20,7 @@ database.initializeChannels();
 const channelId = config.discord.channels[0].id;
 const guildId = config.discord.guildId;
 const userId = 'quality-user';
-const session = database.createSession({
+database.createSession({
   sessionId: randomUUID(),
   guildId,
   channelId,
@@ -32,6 +33,7 @@ database.setProfile(guildId, userId, {
   sourceSummary: 'VRChat向けツールを開発している',
 });
 const contextBuilder = new ContextBuilder({ database, config });
+const sessionService = new SessionService({ database, config, model, logger });
 const searchProvider = config.web.enabled ? new SearxngSearchProvider(config.web) : null;
 const orchestrator = new ConversationOrchestrator({ model, searchProvider, config, logger });
 
@@ -40,12 +42,15 @@ async function turn(content) {
   sequence += 1;
   const messageId = `quality-user-${sequence}`;
   const createdAt = new Date(Date.now() + sequence * 1000).toISOString();
+  const activeSession = database.getSession(
+    database.getChannel(guildId, channelId).activeSessionId,
+  );
   database.ingestMessage(
     {
       messageId,
       guildId,
       channelId,
-      sessionId: session.sessionId,
+      sessionId: activeSession.sessionId,
       authorId: userId,
       authorName: 'natuki.',
       authorType: 'human',
@@ -55,6 +60,7 @@ async function turn(content) {
     },
     config.privacy.messageRetentionHours,
   );
+  await sessionService.maybeStartNewTopic(guildId, channelId, [messageId]);
   const context = contextBuilder.build({ guildId, channelId, sourceMessageIds: [messageId] });
   const result = await orchestrator.respond(context, [messageId]);
   const responseId = `quality-bot-${sequence}`;
@@ -63,7 +69,7 @@ async function turn(content) {
       messageId: responseId,
       guildId,
       channelId,
-      sessionId: session.sessionId,
+      sessionId: context.sessionId,
       authorId: 'quality-bot',
       authorName: 'AI Chat',
       authorType: 'bot',
@@ -73,7 +79,7 @@ async function turn(content) {
     },
     config.privacy.messageRetentionHours,
   );
-  return { answer: result.answer.trim(), usedWeb: result.usedWeb };
+  return { answer: result.answer.trim(), usedWeb: result.usedWeb, sessionId: context.sessionId };
 }
 
 try {
@@ -98,8 +104,13 @@ try {
     }
     if (turns[3].answer.length > 40) throw new Error('laughter_response_too_long');
     if (/意味|おそらく|説明/u.test(turns[3].answer)) throw new Error('laughter_overexplained');
+    if (/それより|ところで|VRChat|ツール|開発/u.test(turns[3].answer)) {
+      throw new Error('laughter_changed_topic');
+    }
     if (/VRChat|ツール|開発/u.test(turns[2].answer)) throw new Error('unrelated_profile_leak');
     if (turns[2].answer.includes('\n')) throw new Error('general_opinion_added_side_topic');
+    if (turns[1].sessionId === turns[2].sessionId) throw new Error('new_topic_not_split');
+    if (turns[2].sessionId !== turns[3].sessionId) throw new Error('reaction_lost_context');
     if (turns[4].usedWeb) throw new Error('fortune_used_web_search');
     if (/https?:\/\/|参照/u.test(turns[4].answer)) throw new Error('fortune_included_sources');
     if (/明日|あした|翌日/u.test(turns[4].answer)) throw new Error('fortune_changed_timeframe');

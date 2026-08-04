@@ -94,6 +94,7 @@ test('ContextBuilderは今回の発言者の本人登録profileだけを渡す',
   assert.match(context.system, /人物評価や性格判断へ変換しない/);
   assert.match(context.system, /古い話題へ突然戻らない/);
   assert.match(context.system, /毎回答で名前を呼ばない/);
+  assert.doesNotMatch(context.conversation, /私もいるよ/);
 });
 
 test('本人情報と無関係な質問ではprofileを参照しない', () => {

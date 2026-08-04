@@ -88,7 +88,7 @@ Phase 0で各候補modelに同じprompt setを実行し、次を記録する。
 - Web tool選択テストで明示検索を取りこぼさない。
 - 日本語の複数話者を混同しない。
 
-既定modelは3B～4B量子化から選ぶ。7B～8Bは品質向上が応答遅延とVRAM不安定を上回る場合だけ採用する。
+2026-08-04の実機比較では`qwen3.5:9b`を採用した。RTX 2060 6GBではmodel全体はVRAMへ収まらずCPU/GPU hybridになるため、8K context・global concurrency 1を維持する。応答遅延またはmemory pressureが許容範囲を超えた場合は、保持済みの`qwen3.5:4b`へ戻す。
 
 ## 6. 常駐設計
 
