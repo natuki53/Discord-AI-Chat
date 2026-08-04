@@ -1,0 +1,36 @@
+services:
+  search:
+    image: docker.io/searxng/searxng:latest
+    container_name: discord-ai-search
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:8888:8080'
+    volumes:
+      - ./runtime/searxng-settings.yml:/etc/searxng/settings.yml:ro
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=64m
+      - /var/cache/searxng:size=64m
+
+  bot:
+    build:
+      context: .
+    container_name: discord-ai-chat
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - ./runtime/bot.env
+    environment:
+      NODE_ENV: production
+      BOT_CONFIG: /app/runtime/bot.yaml
+      BOT_DATABASE_PATH: /app/data/bot.sqlite3
+    volumes:
+      - ./runtime/bot.yaml:/app/runtime/bot.yaml:ro
+      - ./data:/app/data
+    depends_on:
+      - search
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

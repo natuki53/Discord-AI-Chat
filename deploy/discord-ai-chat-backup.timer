@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Discord AI Chat database backup
+
+[Timer]
+OnCalendar=*-*-* 04:15:00 Asia/Tokyo
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

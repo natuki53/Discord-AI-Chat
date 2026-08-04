@@ -1,0 +1,31 @@
+[Unit]
+Description=Discord AI Chat Bot
+After=network-online.target ollama.service docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=discord-ai
+Group=discord-ai
+WorkingDirectory=/opt/discord-ai-chat/current
+Environment=NODE_ENV=production
+Environment=BOT_CONFIG=/etc/discord-ai-chat/bot.yaml
+Environment=BOT_DATABASE_PATH=/var/lib/discord-ai-chat/bot.sqlite3
+EnvironmentFile=/etc/discord-ai-chat/bot.env
+ExecStartPre=/usr/bin/node scripts/doctor.js --offline
+ExecStart=/usr/bin/node src/index.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=40s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/discord-ai-chat
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

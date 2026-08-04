@@ -1,0 +1,39 @@
+{
+  "name": "discord-ai-chat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "会話の流れを把握して参加する、ローカルLLMベースのDiscord Bot",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dev": "node --watch --env-file-if-exists=.env src/index.js",
+    "test": "node --test test/*.test.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "doctor": "node --env-file-if-exists=.env scripts/doctor.js",
+    "register-commands": "node --env-file-if-exists=.env scripts/register-commands.js",
+    "benchmark": "node scripts/benchmark-model.js",
+    "smoke": "node scripts/integration-smoke.js",
+    "quality-smoke": "node scripts/conversation-quality-smoke.js"
+  },
+  "dependencies": {
+    "@mozilla/readability": "0.6.0",
+    "better-sqlite3": "13.0.2",
+    "discord.js": "14.27.0",
+    "ipaddr.js": "2.4.0",
+    "linkedom": "0.18.13",
+    "pino": "10.3.1",
+    "undici": "8.10.0",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.8.0",
+    "prettier": "3.9.6"
+  }
+}
