@@ -98,5 +98,9 @@ test('挨拶と短い笑いを会話用に識別する', () => {
   assert.equal(isLaughterOnly('www それは違う'), false);
   assert.match(turnStyleInstruction('www'), /20文字程度/);
   assert.match(turnStyleInstruction('今日の運勢を占って'), /会話遊び/);
+  assert.match(turnStyleInstruction('今日の運勢を占って'), /指定された期間/);
   assert.match(turnStyleInstruction('ギャンブルしてる人ってどう思う？'), /一般的な意見/);
+  assert.match(turnStyleInstruction('私ってどんな人だと思う？'), /前置きは加えず/);
+  assert.match(turnStyleInstruction('それでいいと思う'), /古い話題を復活/);
+  assert.match(turnStyleInstruction('それでいいと思う'), /1〜3文/);
 });

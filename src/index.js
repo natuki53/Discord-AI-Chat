@@ -46,6 +46,7 @@ async function main() {
     database,
     model,
     searchProvider,
+    profileService,
     contextBuilder,
     sessionService,
     orchestrator,

@@ -8,6 +8,9 @@ const ACCEPTED_MESSAGE_TYPES = new Set([MessageType.Default, MessageType.Reply])
 
 export class DiscordBot {
   constructor(services) {
+    if (!services.profileService) {
+      throw new Error('profileServiceがDiscord commandへ接続されていません');
+    }
     this.services = services;
     this.config = services.config;
     this.database = services.database;

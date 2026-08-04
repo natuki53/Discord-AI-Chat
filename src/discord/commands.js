@@ -1,8 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { sanitizeDisplayName } from '../shared/text.js';
 
 const ephemeral = { flags: MessageFlags.Ephemeral };
+
+function changeCallout(title, description, { color = 0x5865f2, fields = [] } = {}) {
+  const embed = new EmbedBuilder().setColor(color).setTitle(title).setDescription(description);
+  if (fields.length) embed.addFields(fields);
+  return { embeds: [embed] };
+}
 
 export function commandDefinitions() {
   return [
@@ -239,12 +245,18 @@ export async function handleCommand(interaction, services) {
     }
     if (subcommand === 'reset') {
       const removed = database.resetPreference(interaction.guildId, interaction.user.id);
-      await interaction.reply({
-        content: removed
-          ? '自分向けの明示設定を削除しました。'
-          : '削除する設定はありませんでした。',
-        ...ephemeral,
-      });
+      await interaction.reply(
+        removed
+          ? {
+              ...changeCallout(
+                '🗑️ 個人設定を削除しました',
+                '呼び名・口調・回答長・ネタへの反応を初期状態へ戻しました。',
+                { color: 0xed4245 },
+              ),
+              ...ephemeral,
+            }
+          : { content: '削除する設定はありませんでした。', ...ephemeral },
+      );
       return;
     }
 
@@ -267,7 +279,18 @@ export async function handleCommand(interaction, services) {
       responseLength: interaction.options.getString('length') ?? previous.responseLength,
       banterLevel: interaction.options.getString('banter') ?? previous.banterLevel,
     });
-    await interaction.reply({ content: `設定しました。\n${preferenceText(saved)}`, ...ephemeral });
+    await interaction.reply({
+      ...changeCallout('✅ 個人設定を更新しました', '次の会話から反映します。', {
+        color: 0x57f287,
+        fields: [
+          { name: '呼び名', value: saved.preferredName ?? '自動', inline: true },
+          { name: '口調', value: saved.tone, inline: true },
+          { name: '回答の長さ', value: saved.responseLength, inline: true },
+          { name: 'ネタへの反応', value: saved.banterLevel, inline: true },
+        ],
+      }),
+      ...ephemeral,
+    });
     return;
   }
 
@@ -282,12 +305,18 @@ export async function handleCommand(interaction, services) {
     }
     if (subcommand === 'reset') {
       const removed = database.resetProfile(interaction.guildId, interaction.user.id);
-      await interaction.reply({
-        content: removed
-          ? '本人登録のプロフィール情報を削除しました。'
-          : '削除するプロフィール情報はありませんでした。',
-        ...ephemeral,
-      });
+      await interaction.reply(
+        removed
+          ? {
+              ...changeCallout(
+                '🗑️ プロフィール情報を削除しました',
+                '登録した自己紹介・公開リンク・明記情報の要約を削除しました。',
+                { color: 0xed4245 },
+              ),
+              ...ephemeral,
+            }
+          : { content: '削除するプロフィール情報はありませんでした。', ...ephemeral },
+      );
       return;
     }
 
@@ -323,7 +352,25 @@ export async function handleCommand(interaction, services) {
       const warning = prepared.failedHosts.length
         ? `\n取得できなかったリンク: ${prepared.failedHosts.join(', ')}`
         : '';
-      await interaction.editReply(`登録しました。\n${profileText(saved)}${warning}`);
+      await interaction.editReply({
+        ...changeCallout(
+          subcommand === 'refresh'
+            ? '🔄 プロフィール情報を更新しました'
+            : '✅ プロフィール情報を登録しました',
+          `次の本人情報が必要な会話から反映します。${warning}`,
+          {
+            color: 0x57f287,
+            fields: [
+              { name: '自己紹介', value: saved.selfDescription ?? '未設定' },
+              {
+                name: '公開リンク',
+                value: saved.links.length ? saved.links.join('\n') : '未設定',
+              },
+              { name: '明記情報の要約', value: saved.sourceSummary ?? '取得できる情報なし' },
+            ],
+          },
+        ),
+      });
     } catch (error) {
       logger.warn(
         { event: 'profile_update_failed', error: error.message },
@@ -353,7 +400,18 @@ export async function handleCommand(interaction, services) {
       metadata: result,
     });
     await interaction.reply({
-      content: `保存中の本文${result.messages}件、設定${result.preferences}件、プロフィール${result.profiles}件を削除しました。`,
+      ...changeCallout(
+        '🗑️ 保存データを削除しました',
+        'このサーバー内の本人データを削除しました。',
+        {
+          color: 0xed4245,
+          fields: [
+            { name: 'メッセージ本文', value: `${result.messages}件`, inline: true },
+            { name: '個人設定', value: `${result.preferences}件`, inline: true },
+            { name: 'プロフィール', value: `${result.profiles}件`, inline: true },
+          ],
+        },
+      ),
       ...ephemeral,
     });
     return;
@@ -375,17 +433,29 @@ export async function handleCommand(interaction, services) {
       return;
     }
 
-    let message;
+    let response;
     if (name === 'ai-resume') {
       const channel = database.resumeChannel(interaction.guildId, interaction.channelId);
-      message = `応答を再開しました。モード: ${channel.mode}`;
+      response = changeCallout(
+        '▶️ AI応答を再開しました',
+        `現在の応答モードは **${channel.mode}** です。`,
+        { color: 0x57f287 },
+      );
     } else if (name === 'ai-context-reset' || name === 'ai-topic-reset') {
       sessionService.reset(interaction.guildId, interaction.channelId);
-      message = '話題の流れをリセットしました。次の発言から新しい会話として扱います。';
+      response = changeCallout(
+        '🔄 話題の流れをリセットしました',
+        '次の発言から新しい会話として扱います。',
+        { color: 0xfee75c },
+      );
     } else {
       const mode = name === 'ai-pause' ? 'paused' : interaction.options.getString('mode', true);
       const channel = database.setChannelMode(interaction.guildId, interaction.channelId, mode);
-      message = `モードを ${channel.mode} に変更しました。`;
+      response = changeCallout(
+        channel.mode === 'paused' ? '⏸️ AI応答を停止しました' : '⚙️ 応答モードを変更しました',
+        `現在の応答モードは **${channel.mode}** です。`,
+        { color: channel.mode === 'paused' ? 0xed4245 : 0x5865f2 },
+      );
     }
     database.addAuditEvent({
       eventId: randomUUID(),
@@ -395,7 +465,7 @@ export async function handleCommand(interaction, services) {
       action: name,
       metadata: {},
     });
-    await interaction.reply({ content: message });
+    await interaction.reply(response);
     return;
   }
 

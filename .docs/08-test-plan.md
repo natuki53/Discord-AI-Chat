@@ -75,6 +75,7 @@ fake clockで次を検証する。
 - semantic topic changeはconfidence 0.80未満なら単独で切らない。
 - `/ai-context-reset`と`/ai-topic-reset`で新session。
 - `/ai-status`、`/ai-privacy`、管理操作の成功応答は全員へ表示し、本人設定・本人データ・報告・権限エラーはephemeralにする。
+- 設定・保存データ・応答モード・話題の変更成功時だけ色付きEmbedを返し、通常会話は従来の本文投稿を維持する。
 - summary更新条件の12messageと80%budgetを検出する。
 
 ### 3.7 Response/stale policy

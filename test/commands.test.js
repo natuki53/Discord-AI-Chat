@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MessageFlags } from 'discord.js';
+import { DiscordBot } from '../src/discord/bot.js';
 import { commandDefinitions, handleCommand } from '../src/discord/commands.js';
 
 function assertRequiredOptionsFirst(options = [], path = '') {
@@ -31,6 +32,10 @@ test('Discord command定義は登録可能なoption順である', () => {
   }
 });
 
+test('profile serviceの配線漏れは起動時に検出する', () => {
+  assert.throws(() => new DiscordBot({}), /profileService/);
+});
+
 function createServices() {
   return {
     config: {
@@ -47,20 +52,39 @@ function createServices() {
       getChannel: () => ({ mode: 'all' }),
       getPreference: () => null,
       getProfile: () => null,
+      setPreference: (_guildId, _userId, preference) => preference,
+      setProfile: (_guildId, _userId, profile) => profile,
+      resetPreference: () => true,
+      resetProfile: () => true,
+      forgetUser: () => ({ messages: 2, preferences: 1, profiles: 1 }),
       setChannelMode: (_guildId, _channelId, mode) => ({ mode }),
       resumeChannel: () => ({ mode: 'all' }),
       addAuditEvent() {},
     },
     model: { health: async () => ({ ok: true }) },
     searchProvider: null,
+    profileService: {
+      prepare: async () => ({
+        selfDescription: 'VRChatで遊んでいます',
+        links: [],
+        sourceSummary: 'VRChatで遊んでいる',
+        refreshedAt: '2026-08-04T00:00:00.000Z',
+        failedHosts: [],
+      }),
+    },
     scheduler: { queueLength: () => 0 },
     sessionService: { reset: () => true },
     logger: { warn() {} },
   };
 }
 
-function createInteraction(commandName, { subcommand = 'show', admin = true } = {}) {
+function createInteraction(
+  commandName,
+  { subcommand = 'show', admin = true, confirm = false } = {},
+) {
   const replies = [];
+  const deferred = [];
+  const edits = [];
   return {
     commandName,
     guildId: 'guild-1',
@@ -70,14 +94,22 @@ function createInteraction(commandName, { subcommand = 'show', admin = true } = 
     member: { roles: { cache: { map: () => [] } } },
     options: {
       getSubcommand: () => subcommand,
-      getBoolean: (name) => name !== 'confirm',
+      getBoolean: (name) => (name === 'confirm' ? confirm : true),
       getString: (name) => (name === 'mode' ? 'all' : 'テスト報告'),
     },
     isChatInputCommand: () => true,
     async reply(payload) {
       replies.push(payload);
     },
+    async deferReply(payload) {
+      deferred.push(payload);
+    },
+    async editReply(payload) {
+      edits.push(payload);
+    },
     replies,
+    deferred,
+    edits,
   };
 }
 
@@ -96,7 +128,29 @@ test('共有コマンドの成功応答はチャンネル全員へ表示する',
     await handleCommand(interaction, services);
     assert.equal(interaction.replies.length, 1, commandName);
     assert.equal(interaction.replies[0].flags, undefined, commandName);
+    if (!['ai-status', 'ai-privacy'].includes(commandName)) {
+      assert.equal(interaction.replies[0].embeds.length, 1, commandName);
+    }
   }
+});
+
+test('本人設定を変更した成功応答も非公開calloutにする', async () => {
+  const services = createServices();
+
+  const preferences = createInteraction('ai-preferences', { subcommand: 'set' });
+  await handleCommand(preferences, services);
+  assert.equal(preferences.replies[0].flags, MessageFlags.Ephemeral);
+  assert.equal(preferences.replies[0].embeds.length, 1);
+
+  const profile = createInteraction('ai-profile', { subcommand: 'set' });
+  await handleCommand(profile, services);
+  assert.equal(profile.deferred[0].flags, MessageFlags.Ephemeral);
+  assert.equal(profile.edits[0].embeds.length, 1);
+
+  const forget = createInteraction('ai-forget', { confirm: true });
+  await handleCommand(forget, services);
+  assert.equal(forget.replies[0].flags, MessageFlags.Ephemeral);
+  assert.equal(forget.replies[0].embeds.length, 1);
 });
 
 test('本人情報・報告・権限エラーは実行者だけに表示する', async () => {

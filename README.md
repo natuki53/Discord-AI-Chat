@@ -48,6 +48,7 @@ BOT_DATABASE_PATH=data/bot.sqlite3
 ```bash
 npm run doctor
 npm run register-commands
+npm run analyze-history -- 200
 npm test
 npm start
 ```
@@ -85,10 +86,13 @@ Developer PortalのBot設定でMessage Content Intentを有効にしてくださ
 - `/ai-report` — 問題報告
 
 `/ai-status`、`/ai-privacy`と管理者によるモード変更・停止・再開・話題リセットの成功結果は、チャンネル全員に表示されます。本人情報を扱う`/ai-preferences`、`/ai-profile`、`/ai-forget`、報告内容、権限エラーは実行者だけに表示されます。
+設定・保存データ・応答モード・話題を変更した成功通知は、通常会話と区別できる色付きEmbedで表示します。
 
 ## プライバシー
 
 Botは対象チャンネルの現在の会話を理解する目的で、本文と会話要約を既定24時間保存します。過去ログの一括取得、個人の性格・属性・人間関係のプロファイル、メッセージを使ったモデル学習は行いません。`/ai-profile`は本人が同意して登録した情報だけを扱い、公開ページに明記された活動・作品・趣味・関心だけを抽出します。
+
+`analyze-history`は保持期間内の本文を読み取り専用でローカルLLMへ渡し、名前・ID・URLを除いた応答品質の傾向だけを出力します。モデルの追加学習や個人profileの作成には使用しません。
 
 ## ライセンス
 

@@ -17,6 +17,7 @@
     "doctor": "node --env-file-if-exists=.env scripts/doctor.js",
     "register-commands": "node --env-file-if-exists=.env scripts/register-commands.js",
     "benchmark": "node scripts/benchmark-model.js",
+    "analyze-history": "node scripts/analyze-conversation-history.js",
     "smoke": "node scripts/integration-smoke.js",
     "quality-smoke": "node scripts/conversation-quality-smoke.js"
   },
