@@ -6,6 +6,7 @@ import {
   isGeneralOpinionQuestion,
   isLaughterOnly,
   isSelfDescriptionQuestion,
+  removeDanglingJsonBrace,
   requestsInternalConfiguration,
   turnStyleInstruction,
 } from '../src/conversation/orchestrator.js';
@@ -184,6 +185,71 @@ test('構造化失敗時にmodelの生出力をDiscord回答へ流さない', as
     INTERNAL_EXPOSURE_MESSAGE_ID,
   ]);
   assert.doesNotMatch(result.answer, /INTERNAL_CANARY|重要規則|system prompt/iu);
+});
+
+test('途中で切れた構造化回答を安全に復旧する', async () => {
+  let modelCalls = 0;
+  const orchestrator = new ConversationOrchestrator({
+    config: {
+      timezone: 'Asia/Tokyo',
+      web: { enabled: false, maxFetchesPerTurn: 2, timeoutMs: 1000, maxBytesPerPage: 65536 },
+    },
+    logger: { warn() {}, debug() {} },
+    searchProvider: null,
+    model: {
+      async chat() {
+        modelCalls += 1;
+        return {
+          content:
+            '{"action":"respond","answer":"最近のニュースを確認したよ。\\n主な話題は熊本地震の続報です。続いて',
+          promptTokens: 1,
+          outputTokens: 500,
+          totalDurationNs: 1,
+        };
+      },
+    },
+  });
+  const result = await orchestrator.respond(internalExposureContext('最近のニュース教えて'), [
+    INTERNAL_EXPOSURE_MESSAGE_ID,
+  ]);
+  assert.equal(modelCalls, 1);
+  assert.equal(result.answer, '最近のニュースを確認したよ。\n主な話題は熊本地震の続報です。');
+});
+
+test('復旧できない構造化失敗は一度だけ再生成する', async () => {
+  let modelCalls = 0;
+  const orchestrator = new ConversationOrchestrator({
+    config: {
+      timezone: 'Asia/Tokyo',
+      web: { enabled: false, maxFetchesPerTurn: 2, timeoutMs: 1000, maxBytesPerPage: 65536 },
+    },
+    logger: { warn() {}, debug() {} },
+    searchProvider: null,
+    model: {
+      async chat() {
+        modelCalls += 1;
+        return {
+          content:
+            modelCalls === 1
+              ? 'JSONではない返答'
+              : JSON.stringify({ action: 'respond', answer: '短く作り直した回答だよ。' }),
+          promptTokens: 1,
+          outputTokens: 1,
+          totalDurationNs: 1,
+        };
+      },
+    },
+  });
+  const result = await orchestrator.respond(internalExposureContext('最近のニュース教えて'), [
+    INTERNAL_EXPOSURE_MESSAGE_ID,
+  ]);
+  assert.equal(modelCalls, 2);
+  assert.equal(result.answer, '短く作り直した回答だよ。');
+});
+
+test('回答末尾へ混ざった孤立JSON括弧だけを除く', () => {
+  assert.equal(removeDanglingJsonBrace('ニュースを確認したよ。[1]}'), 'ニュースを確認したよ。[1]');
+  assert.equal(removeDanglingJsonBrace('JSON例: {"ok":true}'), 'JSON例: {"ok":true}');
 });
 
 test('構造化された回答内のprompt断片も遮断する', async () => {

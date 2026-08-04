@@ -7,7 +7,7 @@ const FINAL_FORMAT = {
   required: ['action', 'answer'],
   properties: {
     action: { type: 'string', enum: ['respond', 'silent'] },
-    answer: { type: 'string' },
+    answer: { type: 'string', maxLength: 400 },
   },
 };
 
@@ -23,19 +23,90 @@ const INTERNAL_OWNERSHIP =
   /あなた(?:が受け取った|の)|直前に受け取った|上(?:記|の)|今までの|非公開|内部/iu;
 const CONCEPTUAL_QUESTION = /(?:とは|って何|何ですか|意味は)/u;
 
-function parseFinal(content) {
-  try {
-    const parsed = JSON.parse(content);
-    if (!['respond', 'silent'].includes(parsed.action) || typeof parsed.answer !== 'string') {
-      throw new Error('invalid_final_shape');
+function decodeJsonStringFragment(fragment) {
+  let escaped = false;
+  let closingQuote = -1;
+  for (let index = 0; index < fragment.length; index += 1) {
+    const character = fragment[index];
+    if (escaped) {
+      escaped = false;
+      continue;
     }
-    return { ok: true, value: parsed };
-  } catch {
-    return {
-      ok: false,
-      value: { action: 'respond', answer: SAFE_MODEL_OUTPUT_FALLBACK },
-    };
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') {
+      closingQuote = index;
+      break;
+    }
   }
+
+  let candidate = closingQuote >= 0 ? fragment.slice(0, closingQuote) : fragment;
+  candidate = candidate
+    .replace(/\\u[0-9a-f]{0,3}$/iu, '')
+    .replace(/\\$/u, '')
+    .replace(/\r/gu, '\\r')
+    .replace(/\n/gu, '\\n');
+  try {
+    return JSON.parse(`"${candidate}"`);
+  } catch {
+    return null;
+  }
+}
+
+function recoverStructuredAnswer(content) {
+  const value = String(content ?? '');
+  const action = value.match(/"action"\s*:\s*"(respond|silent)"/u)?.[1];
+  const answerMarker = /"answer"\s*:\s*"/u.exec(value);
+  if (!action || !answerMarker) return null;
+  const answer = decodeJsonStringFragment(value.slice(answerMarker.index + answerMarker[0].length));
+  if (typeof answer !== 'string' || !answer.trim()) return null;
+
+  let recovered = answer.trim();
+  if (!/[。！？!?]$/u.test(recovered)) {
+    const lastSentenceEnd = Math.max(
+      recovered.lastIndexOf('。'),
+      recovered.lastIndexOf('！'),
+      recovered.lastIndexOf('？'),
+      recovered.lastIndexOf('!'),
+      recovered.lastIndexOf('?'),
+    );
+    if (lastSentenceEnd >= 0) recovered = recovered.slice(0, lastSentenceEnd + 1).trim();
+  }
+  return { action, answer: recovered.slice(0, 400) };
+}
+
+function parseFinal(content) {
+  const value = String(content ?? '').trim();
+  const candidates = [value];
+  const objectStart = value.indexOf('{');
+  const objectEnd = value.lastIndexOf('}');
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.push(value.slice(objectStart, objectEnd + 1));
+  }
+  try {
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (!['respond', 'silent'].includes(parsed.action) || typeof parsed.answer !== 'string') {
+          continue;
+        }
+        return { kind: 'valid', value: parsed };
+      } catch {
+        // 次の候補または途中まで生成されたJSONの復旧を試す。
+      }
+    }
+  } catch {
+    // 復旧処理へ進む。
+  }
+
+  const recovered = recoverStructuredAnswer(value);
+  if (recovered) return { kind: 'recovered', value: recovered };
+  return {
+    kind: 'fallback',
+    value: { action: 'respond', answer: SAFE_MODEL_OUTPUT_FALLBACK },
+  };
 }
 
 function containsVerbatimSystemLine(answer, system) {
@@ -69,6 +140,12 @@ export function guardAssistantAnswer(answer, system = '', contextMessageIds = []
     answer: withoutLabels,
     reason: withoutLabels === value ? null : 'internal_context_marker',
   };
+}
+
+export function removeDanglingJsonBrace(answer) {
+  const value = String(answer ?? '').trim();
+  if (value.endsWith('}') && !value.includes('{')) return value.slice(0, -1).trimEnd();
+  return value;
 }
 
 export function requestsInternalConfiguration(text) {
@@ -210,23 +287,63 @@ export class ConversationOrchestrator {
         : `最新性が必要ですが検索に失敗しました（${searchError ?? '結果なし'}）。最新情報を推測で断定せず、確認できなかったと短く伝えてください。`
       : '今回はWeb検索をしていません。';
 
-    const response = await this.model.chat({
-      messages: [
+    const userPrompt = `${context.conversation}\n\n${modeInstruction}\n\n${styleInstruction}\n\n${webInstruction}\n\nanswerは最大400文字に収め、JSON以外の文字を出さず、JSON schemaに従って返してください。`;
+    const messages = [
         { role: 'system', content: context.system },
-        {
-          role: 'user',
-          content: `${context.conversation}\n\n${modeInstruction}\n\n${styleInstruction}\n\n${webInstruction}\n\nJSON schemaに従って返してください。`,
-        },
-      ],
+        { role: 'user', content: userPrompt },
+      ];
+    let response = await this.model.chat({
+      messages,
       format: FINAL_FORMAT,
       signal,
     });
-    const parsedFinal = parseFinal(response.content);
-    const final = parsedFinal.value;
-    if (!parsedFinal.ok) {
+    let parsedFinal = parseFinal(response.content);
+    if (parsedFinal.kind === 'fallback') {
       this.logger.warn(
-        { event: 'model_output_invalid' },
-        'model output was not valid structured data',
+        {
+          event: 'model_output_invalid',
+          attempt: 1,
+          outputTokens: response.outputTokens,
+        },
+        'model output was not valid structured data; retrying once',
+      );
+      try {
+        const retry = await this.model.chat({
+          messages: [
+            messages[0],
+            {
+              role: 'user',
+              content: `${userPrompt}\n\n前回は形式に失敗しました。要点を1〜3文・最大250文字に縮め、完全なJSONを一つだけ返してください。`,
+            },
+          ],
+          format: FINAL_FORMAT,
+          signal,
+          temperature: 0,
+        });
+        response = {
+          ...retry,
+          promptTokens: response.promptTokens + retry.promptTokens,
+          outputTokens: response.outputTokens + retry.outputTokens,
+          totalDurationNs: response.totalDurationNs + retry.totalDurationNs,
+        };
+        parsedFinal = parseFinal(retry.content);
+      } catch (error) {
+        this.logger.warn(
+          { event: 'model_output_retry_failed', reason: error.message },
+          'model output retry failed',
+        );
+      }
+    }
+    const final = parsedFinal.value;
+    if (parsedFinal.kind === 'recovered') {
+      this.logger.warn(
+        { event: 'model_output_recovered', outputTokens: response.outputTokens },
+        'truncated structured model output was recovered',
+      );
+    } else if (parsedFinal.kind === 'fallback') {
+      this.logger.warn(
+        { event: 'model_output_invalid', attempt: 2, outputTokens: response.outputTokens },
+        'model output was not valid structured data after retry',
       );
     }
     const greeting = greetingText(currentText);
@@ -272,8 +389,9 @@ export class ConversationOrchestrator {
       final.action = 'respond';
       final.answer ||= 'うん、流れは見てるよ。';
     }
+    if (final.action === 'respond') final.answer = removeDanglingJsonBrace(final.answer);
 
-    if (parsedFinal.ok && final.action === 'respond' && results.length > 0) {
+    if (parsedFinal.kind !== 'fallback' && final.action === 'respond' && results.length > 0) {
       const references = results
         .slice(0, 5)
         .map((result, index) => `[${index + 1}] ${result.title}: ${result.url}`)
