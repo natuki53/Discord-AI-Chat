@@ -94,6 +94,28 @@ test('SSRF対象addressを拒否する', () => {
   assert.equal(__testing.isPublicAddress('8.8.8.8'), true);
 });
 
+test('undiciのall指定に合わせて固定IPを配列で返す', async () => {
+  const lookup = __testing.createPinnedLookup({ address: '203.0.113.10', family: 4 });
+  const addresses = await new Promise((resolve, reject) => {
+    lookup('example.com', { all: true }, (error, value) => {
+      if (error) reject(error);
+      else resolve(value);
+    });
+  });
+  assert.deepEqual(addresses, [{ address: '203.0.113.10', family: 4 }]);
+});
+
+test('通常のDNS lookup形式でも固定IPを返す', async () => {
+  const lookup = __testing.createPinnedLookup({ address: '203.0.113.10', family: 4 });
+  const resolved = await new Promise((resolve, reject) => {
+    lookup('example.com', {}, (error, address, family) => {
+      if (error) reject(error);
+      else resolve({ address, family });
+    });
+  });
+  assert.deepEqual(resolved, { address: '203.0.113.10', family: 4 });
+});
+
 test('挨拶と短い笑いを会話用に識別する', () => {
   assert.equal(greetingText('こんにちは！'), 'こんにちは');
   assert.equal(greetingText('ギャンブルしてる人ってどう思う？'), null);

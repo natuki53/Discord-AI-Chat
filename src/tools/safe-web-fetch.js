@@ -27,6 +27,16 @@ export async function resolvePublicAddress(hostname) {
   return addresses[0];
 }
 
+function createPinnedLookup(resolved) {
+  return (_hostname, options, callback) => {
+    if (options?.all) {
+      callback(null, [{ address: resolved.address, family: resolved.family }]);
+      return;
+    }
+    callback(null, resolved.address, resolved.family);
+  };
+}
+
 async function readLimitedBody(response, maxBytes) {
   const declared = Number(response.headers.get('content-length') ?? 0);
   if (declared > maxBytes) throw new Error('body_too_large');
@@ -65,9 +75,7 @@ export async function safeWebFetch(
     const resolved = await resolvePublicAddress(url.hostname);
     const dispatcher = new Agent({
       connect: {
-        lookup(_hostname, _options, callback) {
-          callback(null, resolved.address, resolved.family);
-        },
+        lookup: createPinnedLookup(resolved),
       },
     });
 
@@ -119,4 +127,4 @@ export async function safeWebFetch(
   throw new Error('too_many_redirects');
 }
 
-export const __testing = { isPublicAddress };
+export const __testing = { createPinnedLookup, isPublicAddress };
