@@ -109,26 +109,27 @@
 
 ### 3.6 管理コマンド
 
-| コマンド                | 権限   | 動作                                                            |
-| ----------------------- | ------ | --------------------------------------------------------------- |
-| `/ai-status`            | 全員   | 応答モード、LLM、検索可否、キュー状況を表示。秘密値は表示しない |
-| `/ai-privacy`           | 全員   | 何を一時保持・永続保存するかと削除方法を表示                    |
-| `/ai-preferences show`  | 本人   | 本人の明示設定をephemeral responseで表示                        |
-| `/ai-preferences set`   | 本人   | 呼び名、口調、長さ、ネタ反応を更新                              |
-| `/ai-preferences reset` | 本人   | 本人の明示設定を削除                                            |
-| `/ai-profile show`      | 本人   | 本人が登録した自己紹介・リンク要約をephemeral表示               |
-| `/ai-profile set`       | 本人   | 同意付きで自己紹介と自分の公開URLを登録                         |
-| `/ai-profile refresh`   | 本人   | 登録済み公開URLを安全に再取得・再要約                           |
-| `/ai-profile reset`     | 本人   | 本人登録profileを削除                                           |
-| `/ai-forget`            | 本人   | 本人に紐づく保存済みメッセージ本文と設定を削除予約              |
-| `/ai-pause`             | 管理者 | チャンネルを`paused`へ変更                                      |
-| `/ai-resume`            | 管理者 | チャンネルの直前モードへ復帰                                    |
-| `/ai-mode`              | 管理者 | `all/ambient/mention/paused`を変更                              |
-| `/ai-context-reset`     | 管理者 | 現在チャンネルの短期contextとsummaryを破棄                      |
-| `/ai-topic-reset`       | 管理者 | 現在の話題を区切り、次の発言から新しいsessionとして扱う         |
-| `/ai-report`            | 全員   | 問題のあるBot応答を運用者向けに記録                             |
+| コマンド                | 権限   | 表示     | 動作                                                            |
+| ----------------------- | ------ | -------- | --------------------------------------------------------------- |
+| `/ai-status`            | 全員   | 全員     | 応答モード、LLM、検索可否、キュー状況を表示。秘密値は表示しない |
+| `/ai-privacy`           | 全員   | 全員     | 何を一時保持・永続保存するかと削除方法を表示                    |
+| `/ai-preferences show`  | 本人   | 本人のみ | 本人の明示設定を表示                                            |
+| `/ai-preferences set`   | 本人   | 本人のみ | 呼び名、口調、長さ、ネタ反応を更新                              |
+| `/ai-preferences reset` | 本人   | 本人のみ | 本人の明示設定を削除                                            |
+| `/ai-profile show`      | 本人   | 本人のみ | 本人が登録した自己紹介・リンク要約を表示                        |
+| `/ai-profile set`       | 本人   | 本人のみ | 同意付きで自己紹介と自分の公開URLを登録                         |
+| `/ai-profile refresh`   | 本人   | 本人のみ | 登録済み公開URLを安全に再取得・再要約                           |
+| `/ai-profile reset`     | 本人   | 本人のみ | 本人登録profileを削除                                           |
+| `/ai-forget`            | 本人   | 本人のみ | 本人に紐づく保存済みメッセージ本文と設定を削除予約              |
+| `/ai-pause`             | 管理者 | 全員     | チャンネルを`paused`へ変更                                      |
+| `/ai-resume`            | 管理者 | 全員     | チャンネルの直前モードへ復帰                                    |
+| `/ai-mode`              | 管理者 | 全員     | `all/ambient/mention/paused`を変更                              |
+| `/ai-context-reset`     | 管理者 | 全員     | 現在チャンネルの短期contextとsummaryを破棄                      |
+| `/ai-topic-reset`       | 管理者 | 全員     | 現在の話題を区切り、次の発言から新しいsessionとして扱う         |
+| `/ai-report`            | 全員   | 本人のみ | 問題のあるBot応答を運用者向けに記録                             |
 
 管理者権限はDiscordの `Manage Guild` または設定した管理ロールで判定する。
+権限不足、対象外Guild・channelなどの操作エラーは実行者だけに表示する。
 
 ## 4. 非機能要件
 

@@ -211,7 +211,6 @@ export async function handleCommand(interaction, services) {
         `待機メッセージ: ${scheduler.queueLength(interaction.channelId)}`,
         `保存期間: ${config.privacy.messageRetentionHours}時間`,
       ].join('\n'),
-      ...ephemeral,
     });
     return;
   }
@@ -225,7 +224,6 @@ export async function handleCommand(interaction, services) {
         '本人が /ai-profile で任意登録した自己紹介と自分の公開リンクは、明記された活動・興味だけを回答調整へ利用します。',
         '自分の設定は /ai-preferences と /ai-profile、保存中データの削除は /ai-forget で行えます。',
       ].join('\n'),
-      ...ephemeral,
     });
     return;
   }
@@ -397,7 +395,7 @@ export async function handleCommand(interaction, services) {
       action: name,
       metadata: {},
     });
-    await interaction.reply({ content: message, ...ephemeral });
+    await interaction.reply({ content: message });
     return;
   }
 
