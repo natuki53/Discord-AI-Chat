@@ -11,17 +11,71 @@ const FINAL_FORMAT = {
   },
 };
 
+const SAFE_MODEL_OUTPUT_FALLBACK = 'ごめん、うまく返答を組み立てられなかった。もう一度聞いてみて。';
+const INTERNAL_SPEAKER_LABEL = /\[(?:U\d+|AI):[^\]\r\n]{1,80}\]\s*[:：]?\s*/gu;
+const PROTECTED_PROMPT_FRAGMENT =
+  /INTERNAL_CANARY_[A-Z0-9_]+|重要規則\s*:|会話セッション要約\s*:|本人が明示した設定\s*:|今回の発言者が本人の同意で登録したプロフィール\s*:|<\/?(?:untrusted_|self_provided_profile_data)[^>]*>|JSON\s*schemaに従って返してください/iu;
+const INTERNAL_REQUEST_TARGET =
+  /system\s*prompt|システムプロンプト|内部(?:の)?(?:指示|規則|設定|プロンプト|思考)|非公開(?:の)?(?:指示|設定|context)|重要規則|会話セッション要約|本人が明示した設定|\bCURRENT\b|\bU\d+\b|<\/?think>/iu;
+const EXTRACTION_ACTION =
+  /一字一句|全文|そのまま|見せ|表示|開示|書いて|出して|含め|dump|続け|無視して/iu;
+const INTERNAL_OWNERSHIP =
+  /あなた(?:が受け取った|の)|直前に受け取った|上(?:記|の)|今までの|非公開|内部/iu;
+const CONCEPTUAL_QUESTION = /(?:とは|って何|何ですか|意味は)/u;
+
 function parseFinal(content) {
   try {
     const parsed = JSON.parse(content);
     if (!['respond', 'silent'].includes(parsed.action) || typeof parsed.answer !== 'string') {
       throw new Error('invalid_final_shape');
     }
-    return parsed;
+    return { ok: true, value: parsed };
   } catch {
-    const fallback = String(content ?? '').trim();
-    return { action: fallback ? 'respond' : 'silent', answer: fallback };
+    return {
+      ok: false,
+      value: { action: 'respond', answer: SAFE_MODEL_OUTPUT_FALLBACK },
+    };
   }
+}
+
+function containsVerbatimSystemLine(answer, system) {
+  return String(system ?? '')
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 32)
+    .some((line) => answer.includes(line));
+}
+
+export function guardAssistantAnswer(answer, system = '', contextMessageIds = []) {
+  const value = String(answer ?? '').trim();
+  if (PROTECTED_PROMPT_FRAGMENT.test(value) || containsVerbatimSystemLine(value, system)) {
+    return { answer: SAFE_MODEL_OUTPUT_FALLBACK, reason: 'protected_prompt_fragment' };
+  }
+  let withoutLabels = value
+    .replace(INTERNAL_SPEAKER_LABEL, '')
+    .replace(/\bCURRENT\b/gu, '今回の発言')
+    .trim();
+  for (const messageId of contextMessageIds) {
+    if (!/^\d{17,20}$/u.test(messageId)) continue;
+    withoutLabels = withoutLabels
+      .replaceAll(messageId, '')
+      .replace(/\s{2,}/gu, ' ')
+      .trim();
+  }
+  if (!withoutLabels) {
+    return { answer: SAFE_MODEL_OUTPUT_FALLBACK, reason: 'empty_after_guard' };
+  }
+  return {
+    answer: withoutLabels,
+    reason: withoutLabels === value ? null : 'internal_context_marker',
+  };
+}
+
+export function requestsInternalConfiguration(text) {
+  const value = String(text ?? '');
+  if (!INTERNAL_REQUEST_TARGET.test(value)) return false;
+  if (CONCEPTUAL_QUESTION.test(value) && !INTERNAL_OWNERSHIP.test(value)) return false;
+  return EXTRACTION_ACTION.test(value) || INTERNAL_OWNERSHIP.test(value);
 }
 
 function buildSourceMaterial(results, pages) {
@@ -51,6 +105,14 @@ export function greetingText(text) {
   return match?.[1] ?? null;
 }
 
+export function isSelfDescriptionQuestion(text) {
+  return /私(?:って|は).{0,12}どんな人|どんな人だと思/u.test(String(text ?? ''));
+}
+
+export function isGeneralOpinionQuestion(text) {
+  return /(?:人|やつ).{0,12}(?:どう思う|どう思います)/u.test(String(text ?? ''));
+}
+
 export function turnStyleInstruction(text) {
   const normalized = String(text ?? '').trim();
   const currentPriority =
@@ -65,10 +127,10 @@ export function turnStyleInstruction(text) {
   if (/(?:占って|占ってみて|おみくじ)/u.test(normalized)) {
     return `${currentPriority}\n今回は会話遊びとしての占いです。外部情報や根拠を持ち出さず、事実の予測だと断定せずに、明るく短い占い結果をその場で作ってください。依頼を断ったり、時期が早いとは言わないでください。指定された期間を変えず、「今日」なら今日の運勢として答えてください。`;
   }
-  if (/(?:人|やつ).{0,12}(?:どう思う|どう思います)/u.test(normalized)) {
+  if (isGeneralOpinionQuestion(normalized)) {
     return `${currentPriority}\n今回は一般的な意見を聞く質問です。直前の本人プロフィールや質問者自身へ結び付けず、質問した理由も推測せずに、聞かれた対象への考えを先に短く答えてください。`;
   }
-  if (/私(?:って|は).{0,12}どんな人|どんな人だと思/u.test(normalized)) {
+  if (isSelfDescriptionQuestion(normalized)) {
     return `${currentPriority}\n人物像を推測せず、今回までの会話で直接観測できたことか、本人登録プロフィールに明記された活動・興味だけを短く伝えてください。「断定できない」「AIだから」「はっきり言えない」などの前置きは加えず、わかっている活動を先に答えてください。`;
   }
   return `${currentPriority}\n雑談は原則1〜3文で答え、求められていない理由の列挙・講義・質問意図の推測を追加しないでください。`;
@@ -87,6 +149,20 @@ export class ConversationOrchestrator {
       sourceMessageIds.includes(message.messageId),
     );
     const currentText = currentMessages.map((message) => message.content).join('\n');
+    if (requestsInternalConfiguration(currentText)) {
+      this.logger.warn(
+        { event: 'internal_request_blocked' },
+        'internal configuration request blocked',
+      );
+      return {
+        action: 'respond',
+        answer: 'その内容は表示できないよ。普段の会話や質問にはそのまま答えるね。',
+        usedWeb: false,
+        promptTokens: 0,
+        outputTokens: 0,
+        totalDurationNs: 0,
+      };
+    }
     const shouldSearch = this.config.web.enabled && needsFreshInformation(currentText);
     let results = [];
     let pages = [];
@@ -145,23 +221,61 @@ export class ConversationOrchestrator {
       format: FINAL_FORMAT,
       signal,
     });
-    const final = parseFinal(response.content);
+    const parsedFinal = parseFinal(response.content);
+    const final = parsedFinal.value;
+    if (!parsedFinal.ok) {
+      this.logger.warn(
+        { event: 'model_output_invalid' },
+        'model output was not valid structured data',
+      );
+    }
     const greeting = greetingText(currentText);
     if (greeting && final.action === 'respond') final.answer = `${greeting}！`;
     if (isLaughterOnly(currentText) && final.action === 'respond') {
       final.answer = final.answer.trim().split(/\n/u)[0].slice(0, 40);
+    }
+    if (isSelfDescriptionQuestion(currentText) && final.action === 'respond') {
+      const lines = final.answer
+        .split(/\n/u)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const substantive = lines.find(
+        (line) =>
+          !/(?:プロフィールから|性格.{0,8}(?:わから|わかりま)|AIだから|断定でき|はっきり言え)/u.test(
+            line,
+          ),
+      );
+      final.answer = (substantive ?? lines[0] ?? final.answer).slice(0, 160);
+    }
+    if (isGeneralOpinionQuestion(currentText) && final.action === 'respond') {
+      final.answer = final.answer.trim().split(/\n/u)[0].slice(0, 160);
     }
     if (context.mode === 'all' && final.action === 'silent' && currentText.trim()) {
       final.action = 'respond';
       final.answer ||= 'うん、流れは見てるよ。';
     }
 
-    if (final.action === 'respond' && results.length > 0) {
+    if (parsedFinal.ok && final.action === 'respond' && results.length > 0) {
       const references = results
         .slice(0, 5)
         .map((result, index) => `[${index + 1}] ${result.title}: ${result.url}`)
         .join('\n');
       final.answer = `${final.answer.trim()}\n\n参照（${new Date().toLocaleDateString('ja-JP', { timeZone: this.config.timezone })}取得）\n${references}`;
+    }
+
+    if (final.action === 'respond') {
+      const guarded = guardAssistantAnswer(
+        final.answer,
+        context.system,
+        context.recent.map((message) => message.messageId),
+      );
+      final.answer = guarded.answer;
+      if (guarded.reason) {
+        this.logger.warn(
+          { event: 'output_guard_triggered', reason: guarded.reason },
+          'assistant output guard triggered',
+        );
+      }
     }
 
     return {

@@ -89,12 +89,17 @@ try {
 
   try {
     if (turns[0].answer !== 'こんにちは！') throw new Error('greeting_mismatch');
-    if (/断定でき|AIだから|はっきり言え/u.test(turns[1].answer)) {
+    if (
+      /断定でき|AIだから|はっきり言え|プロフィールから|性格.{0,8}(?:わから|わかりま)/u.test(
+        turns[1].answer,
+      )
+    ) {
       throw new Error('profile_answer_has_meta_disclaimer');
     }
     if (turns[3].answer.length > 40) throw new Error('laughter_response_too_long');
     if (/意味|おそらく|説明/u.test(turns[3].answer)) throw new Error('laughter_overexplained');
     if (/VRChat|ツール|開発/u.test(turns[2].answer)) throw new Error('unrelated_profile_leak');
+    if (turns[2].answer.includes('\n')) throw new Error('general_opinion_added_side_topic');
     if (turns[4].usedWeb) throw new Error('fortune_used_web_search');
     if (/https?:\/\/|参照/u.test(turns[4].answer)) throw new Error('fortune_included_sources');
     if (/明日|あした|翌日/u.test(turns[4].answer)) throw new Error('fortune_changed_timeframe');

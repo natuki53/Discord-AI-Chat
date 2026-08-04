@@ -49,6 +49,8 @@ BOT_DATABASE_PATH=data/bot.sqlite3
 npm run doctor
 npm run register-commands
 npm run analyze-history -- 200
+npm run audit-internal -- 1000
+npm run security-smoke
 npm test
 npm start
 ```
@@ -93,6 +95,8 @@ Developer PortalのBot設定でMessage Content Intentを有効にしてくださ
 Botは対象チャンネルの現在の会話を理解する目的で、本文と会話要約を既定24時間保存します。過去ログの一括取得、個人の性格・属性・人間関係のプロファイル、メッセージを使ったモデル学習は行いません。`/ai-profile`は本人が同意して登録した情報だけを扱い、公開ページに明記された活動・作品・趣味・関心だけを抽出します。
 
 `analyze-history`は保持期間内の本文を読み取り専用でローカルLLMへ渡し、名前・ID・URLを除いた応答品質の傾向だけを出力します。モデルの追加学習や個人profileの作成には使用しません。
+
+モデルの構造化出力が壊れた場合は生出力をDiscordへ送らず定型文へ置き換えます。正常な出力も投稿直前に検査し、内部話者label、contextのmessage ID、prompt section、非信頼データ用tagを除去または遮断します。
 
 ## ライセンス
 

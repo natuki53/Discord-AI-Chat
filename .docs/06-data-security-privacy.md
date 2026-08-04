@@ -301,6 +301,7 @@ backup内のデータは最大7日で自然失効する。backup復元時はserv
 | 脅威                      | 攻撃例                                   | 防御                                             |
 | ------------------------- | ---------------------------------------- | ------------------------------------------------ |
 | Prompt injection          | 利用者がsystem rule無視を要求            | prompt hierarchy、tool schema、app側policy       |
+| Prompt fragment exposure  | LLMが内部labelやsystem ruleを回答へ混入  | strict parse、生出力破棄、投稿直前output guard   |
 | Indirect injection        | Web本文が秘密開示や別URL取得を命令       | 非信頼境界、search-result allowlist、tool budget |
 | SSRF                      | `127.0.0.1:11434`やrouter管理画面をfetch | public HTTPSのみ、DNS/IP検証、redirect再検証     |
 | Mention abuse             | AIが`@everyone`を生成                    | `allowedMentions: { parse: [] }`                 |

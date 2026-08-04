@@ -420,19 +420,21 @@ pending -> debouncing -> generating -> posting -> posted
 
 ## 9. エラー方針
 
-| エラー                    | retry           | 利用者への表示                      | ログ                       |
-| ------------------------- | --------------- | ----------------------------------- | -------------------------- |
-| Discord 429               | SDKに従う       | 通常なし                            | route、retryAfter          |
-| Discord permission denied | なし            | 管理者向けstatus                    | guild/channel/error code   |
-| Ollama timeout            | 1回             | 「少し混み合っている」              | duration、model、job ID    |
-| Ollama OOM                | 小contextで1回  | 再失敗時のみ短い障害表示            | VRAM取得値、context量      |
-| 検索timeout               | 最大1回         | 検索できなかった旨                  | provider、duration         |
-| Web fetch拒否             | なし            | 原則なし。必要なら読めないURLと表示 | reason category、host hash |
-| LLM schema不正            | 修復promptを1回 | 再失敗時は応答なしまたは定型文      | schema path、model         |
-| SQLite busy               | 短いbackoff     | なし                                | duration                   |
-| SQLite corruption         | 自動復旧しない  | statusで停止中                      | 高優先度alert              |
+| エラー                    | retry          | 利用者への表示                      | ログ                       |
+| ------------------------- | -------------- | ----------------------------------- | -------------------------- |
+| Discord 429               | SDKに従う      | 通常なし                            | route、retryAfter          |
+| Discord permission denied | なし           | 管理者向けstatus                    | guild/channel/error code   |
+| Ollama timeout            | 1回            | 「少し混み合っている」              | duration、model、job ID    |
+| Ollama OOM                | 小contextで1回 | 再失敗時のみ短い障害表示            | VRAM取得値、context量      |
+| 検索timeout               | 最大1回        | 検索できなかった旨                  | provider、duration         |
+| Web fetch拒否             | なし           | 原則なし。必要なら読めないURLと表示 | reason category、host hash |
+| LLM schema不正            | retryなし      | 生出力を破棄して定型文              | model_output_invalid       |
+| SQLite busy               | 短いbackoff    | なし                                | duration                   |
+| SQLite corruption         | 自動復旧しない | statusで停止中                      | 高優先度alert              |
 
 ログへmessage本文、検索query全文、Web本文、secret、LLMのthinkingを含めない。
+
+LLMの最終回答はDiscordへ送る直前にoutput guardを通す。内部話者labelとcontext message IDは除去し、system promptの長い一致、内部section見出し、canary、非信頼データ用tagを検出した場合は回答全体を定型文へ置き換える。guardのログには理由分類だけを残し、検出本文は記録しない。
 
 ## 10. 拡張境界
 
