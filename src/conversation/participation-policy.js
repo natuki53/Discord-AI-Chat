@@ -1,4 +1,3 @@
-import { needsFreshInformation } from '../tools/web-search.js';
 import { sanitizeDisplayName } from '../shared/text.js';
 import { speakerLabel } from './speaker-labels.js';
 
@@ -15,12 +14,11 @@ const REASONS = [
 const PARTICIPATION_FORMAT = {
   type: 'object',
   additionalProperties: false,
-  required: ['action', 'reasonCode', 'targetMessageIds', 'needsWeb'],
+  required: ['action', 'reasonCode', 'targetMessageIds'],
   properties: {
     action: { type: 'string', enum: ['respond', 'silent'] },
     reasonCode: { type: 'string', enum: REASONS },
     targetMessageIds: { type: 'array', items: { type: 'string' }, maxItems: 50 },
-    needsWeb: { type: 'boolean' },
   },
 };
 
@@ -47,7 +45,7 @@ export function currentMessages(context, messageIds) {
 }
 
 export function silentDecision(reasonCode, solicited = false) {
-  return { action: 'silent', reasonCode, targetMessageIds: [], needsWeb: false, solicited };
+  return { action: 'silent', reasonCode, targetMessageIds: [], solicited };
 }
 
 function isOnlyReaction(text) {
@@ -164,7 +162,6 @@ export class ParticipationPolicy {
         action: 'respond',
         reasonCode: 'direct_request',
         targetMessageIds: targets.map((message) => message.messageId),
-        needsWeb: needsFreshInformation(targets.map((message) => message.content).join('\n')),
         solicited,
       };
     }
@@ -176,33 +173,8 @@ export class ParticipationPolicy {
     ) {
       return silentDecision('conversation_between_humans');
     }
-    if (!solicited && messages.every((message) => isOnlyReaction(message.content))) {
-      return silentDecision('no_contribution');
-    }
 
-    const possibleFollowup =
-      messages.some(
-        (message) =>
-          !message.replyToMessageId &&
-          ((context.lastBotTargetAuthorIds ?? []).includes(message.authorId) ||
-            /^(?:じゃあ[、\s]*)?(?:もう少し|詳しく|続き|それ|なぜ|なんで|どういう意味)/u.test(
-              message.content,
-            )),
-      ) && context.recent.some((message) => message.authorType === 'bot');
-    const namedCall =
-      /(?:^|[、。\s])(?:AI|ボット|bot)(?:さん|ちゃん)?(?:[、,:：\s]|は|に|って|どう)/iu.test(
-        text,
-      ) ||
-      (this.config.persona?.name && text.includes(this.config.persona.name));
     const cooldown = (this.config.conversation?.ambientCooldownSeconds ?? 20) * 1000;
-    if (
-      !solicited &&
-      !possibleFollowup &&
-      !namedCall &&
-      Date.now() - Date.parse(context.lastBotMessageAt) < cooldown
-    ) {
-      return silentDecision('cooldown');
-    }
 
     try {
       const decisionIds = new Set([...messageIds, ...later.map((message) => message.messageId)]);
@@ -218,7 +190,7 @@ AI宛の依頼とAIの回答の続きには応じます。人間へのreplyや�
 相づち、挨拶、お礼、笑い、会話の締めに毎回反応せず、場を説明するだけの相づちや会話を引き延ばす質問は追加しません。
 LATESTの人間の回答で元の質問が解決した、撤回された、別話題へ進んだ場合はalready_answeredまたはno_contributionで黙ります。AIへの明示依頼がまだ未解決なら新着があるだけで捨てません。
 CURRENTから返答対象だけをtargetMessageIdsへ選び、別の人に向けた質問を混ぜません。LATESTは判断材料であり新しい返答対象にはしません。
-不明ならsilent。検索は参加するときに最新情報の確認が必要な場合だけneedsWeb=trueにします。`,
+不明ならsilent。検索の必要性は本文を作るClaudeが判断するため、ここでは発言するかと宛先だけを決めます。`,
           },
           {
             role: 'user',
@@ -248,7 +220,6 @@ CURRENTから返答対象だけをtargetMessageIdsへ選び、別の人に向け
       if (
         !['respond', 'silent'].includes(value.action) ||
         !REASONS.includes(value.reasonCode) ||
-        typeof value.needsWeb !== 'boolean' ||
         !Array.isArray(value.targetMessageIds) ||
         !value.targetMessageIds.every((id) => ids.has(id)) ||
         (value.action === 'respond' && !value.targetMessageIds.length)

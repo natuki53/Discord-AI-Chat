@@ -346,7 +346,7 @@ test('高信頼度の別話題判定で自動的にsessionを分ける', async (
   });
 });
 
-test('明示的な続きは話題境界modelへ渡さない', async () => {
+test('続きの表現もClaudeに判定させ、継続ならsessionを保つ', async () => {
   await withAsyncDatabase(async (database) => {
     const config = validConfig();
     const session = createSession(database);
@@ -386,7 +386,13 @@ test('明示的な続きは話題境界modelへ渡さない', async () => {
       model: {
         async chat() {
           modelCalls += 1;
-          throw new Error('呼ばれてはいけない');
+          return {
+            content: JSON.stringify({
+              relation: 'continuation',
+              confidence: 0.99,
+              currentTopic: '競馬',
+            }),
+          };
         },
       },
     });
@@ -394,7 +400,7 @@ test('明示的な続きは話題境界modelへ渡さない', async () => {
       '223456789012345672',
     ]);
     assert.equal(result, null);
-    assert.equal(modelCalls, 0);
+    assert.equal(modelCalls, 1);
     assert.equal(
       database.getChannel(session.guildId, session.channelId).activeSessionId,
       session.sessionId,
@@ -402,7 +408,7 @@ test('明示的な続きは話題境界modelへ渡さない', async () => {
   });
 });
 
-test('明示的な話題転換はmodel判定なしでsessionを分ける', async () => {
+test('明示的な話題転換もClaudeの高信頼度判定でsessionを分ける', async () => {
   await withAsyncDatabase(async (database) => {
     const config = validConfig();
     const session = createSession(database);
@@ -441,7 +447,13 @@ test('明示的な話題転換はmodel判定なしでsessionを分ける', async
       model: {
         async chat() {
           modelCalls += 1;
-          throw new Error('呼ばれてはいけない');
+          return {
+            content: JSON.stringify({
+              relation: 'new_topic',
+              confidence: 0.99,
+              currentTopic: 'AIモデル',
+            }),
+          };
         },
       },
     });
@@ -449,7 +461,7 @@ test('明示的な話題転換はmodel判定なしでsessionを分ける', async
       '223456789012345672',
     ]);
     assert.ok(next);
-    assert.equal(modelCalls, 0);
+    assert.equal(modelCalls, 1);
     assert.notEqual(next.sessionId, session.sessionId);
   });
 });

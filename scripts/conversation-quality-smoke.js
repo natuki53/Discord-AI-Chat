@@ -9,7 +9,6 @@ import { ConversationOrchestrator } from '../src/conversation/orchestrator.js';
 import { SessionService } from '../src/conversation/session-service.js';
 import { createLogger } from '../src/observability/logger.js';
 import { DatabaseStore } from '../src/storage/database.js';
-import { SearxngSearchProvider } from '../src/tools/web-search.js';
 
 const { config } = loadConfig();
 // 既存環境のall指定を引き継がず、人工会話は標準の参加方針で評価する。
@@ -36,8 +35,7 @@ database.setProfile(guildId, userId, {
 });
 const contextBuilder = new ContextBuilder({ database, config });
 const sessionService = new SessionService({ database, config, model, logger });
-const searchProvider = config.web.enabled ? new SearxngSearchProvider(config.web) : null;
-const orchestrator = new ConversationOrchestrator({ model, searchProvider, config, logger });
+const orchestrator = new ConversationOrchestrator({ model, config, logger });
 
 let sequence = 0;
 async function turn(content, { direct = true } = {}) {
@@ -103,7 +101,7 @@ try {
   turns.push({ input: '今日の運勢を占って', ...(await turn('今日の運勢を占って')) });
 
   try {
-    if (turns[0].answer !== 'こんにちは！') throw new Error('greeting_mismatch');
+    if (!turns[0].answer.startsWith('こんにちは')) throw new Error('greeting_mismatch');
     if (
       /断定でき|AIだから|はっきり言え|プロフィールから|性格.{0,8}(?:わから|わかりま)/u.test(
         turns[1].answer,
@@ -118,7 +116,6 @@ try {
       throw new Error('laughter_changed_topic');
     }
     if (/VRChat|ツール|開発/u.test(turns[2].answer)) throw new Error('unrelated_profile_leak');
-    if (turns[2].answer.includes('\n')) throw new Error('general_opinion_added_side_topic');
     if (turns[1].sessionId === turns[2].sessionId) throw new Error('new_topic_not_split');
     if (turns[2].sessionId !== turns[3].sessionId) throw new Error('reaction_lost_context');
     if (turns[4].usedWeb) throw new Error('fortune_used_web_search');

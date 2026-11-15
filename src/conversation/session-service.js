@@ -1,12 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { SPEAKER_LABEL_VERSION, speakerLabel, usableSummary } from './speaker-labels.js';
 
-const CONTINUATION_PREFIX =
-  /^(?:それで|で[、, ]|じゃあ|でも|だから|その(?:話|件|続き)|(?:これ|あれ)(?:って|は|も|どう|なに|何|の)|さっき|先ほど|今まで|これまで|どうして|なぜ|なんで|詳しく|続き|ほんと|本当|マジ|たしかに|確かに)/u;
-const EXPLICIT_TOPIC_SHIFT =
-  /^(?:ところで|それはそうと|話(?:は|を)?変(?:える|えよう|わる|わって)|別の話(?:だけど|なんだけど|にする|しよう)|関係ない(?:話|けど)|急に話変わるけど)/u;
-const SHORT_REACTION =
-  /^(?:w{1,8}|ｗ{1,8}|笑+|草+|うん|はい|そう|なるほど|わかる|えっ?|まじ[か]?)[!！?？….。]*$/iu;
 const TOPIC_BOUNDARY_FORMAT = {
   type: 'object',
   additionalProperties: false,
@@ -31,18 +25,10 @@ function compactMessage(message) {
 }
 
 export function shouldSkipTopicClassification(currentMessages, previousMessages) {
-  if (!previousMessages.some((message) => message.authorType === 'human')) return true;
-  if (currentMessages.some((message) => message.replyToMessageId)) return true;
-  const text = currentMessages
-    .map((message) => message.content)
-    .join('\n')
-    .trim();
-  if (!text) return true;
-  return CONTINUATION_PREFIX.test(text) || SHORT_REACTION.test(text);
-}
-
-export function isExplicitTopicShift(text) {
-  return EXPLICIT_TOPIC_SHIFT.test(String(text ?? '').trim());
+  return (
+    !previousMessages.some((message) => message.authorType === 'human') ||
+    !currentMessages.some((message) => String(message.content ?? '').trim())
+  );
 }
 
 export class SessionService {
@@ -62,10 +48,10 @@ export class SessionService {
       channelId,
       message.replyToMessageId ? [message.replyToMessageId] : [],
     );
+    // 意味判定が有効なら、保持期限内の文脈を残してClaudeに継続か別話題かを判定させる。
     const continues =
-      (reference?.sessionId === current?.sessionId && Boolean(reference)) ||
-      (!isExplicitTopicShift(message.content) &&
-        CONTINUATION_PREFIX.test(String(message.content ?? '').trim()));
+      this.config.conversation.semanticTopicBoundaries ||
+      (reference?.sessionId === current?.sessionId && Boolean(reference));
     const expired =
       !current ||
       current.status !== 'active' ||
@@ -134,17 +120,6 @@ export class SessionService {
       shouldSkipTopicClassification(currentMessages, previousMessages)
     ) {
       return null;
-    }
-
-    if (currentMessages.some((message) => isExplicitTopicShift(message.content))) {
-      return this.startNewTopic(
-        guildId,
-        channelId,
-        session.sessionId,
-        sourceMessageIds,
-        1,
-        'explicit_shift',
-      );
     }
 
     const currentText = currentMessages.map(compactMessage).join('\n');

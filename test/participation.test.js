@@ -32,13 +32,13 @@ const context = (messages, fields = {}) => ({
   ...fields,
 });
 
-test('GC-01/05: 人間へのreplyと笑いだけならモデルも検索も呼ばず黙る', async () => {
+test('GC-01/05: 人間へのreplyは除外し、笑いへの沈黙はClaudeで判断する', async () => {
   const orchestrator = new ConversationOrchestrator({
     config: { web: { enabled: true } },
     logger,
     model: {
       chat() {
-        assert.fail('model must not run');
+        return reply({ action: 'silent', reasonCode: 'no_contribution', targetMessageIds: [] });
       },
     },
     searchProvider: {
@@ -75,7 +75,7 @@ test('GC-02/03/11: Bot宛の依頼・replyは自発参加のcooldownを受けな
     );
     assert.equal(result.action, 'respond');
     assert.equal(result.solicited, true);
-    assert.equal(result.needsWeb, true);
+    assert.equal('needsWeb' in result, false);
   }
 });
 
@@ -92,7 +92,7 @@ test('GC-06: 呼ばれていなくても自然な冗談で参加でき、日時�
     model: {
       async chat(request) {
         calls.push(request);
-        return request.format.properties.reasonCode
+        return request.format?.properties.reasonCode
           ? reply({
               action: 'respond',
               reasonCode: 'natural_contribution',
@@ -106,7 +106,7 @@ test('GC-06: 呼ばれていなくても自然な冗談で参加でき、日時�
   const result = await orchestrator.respond(context([message('今日の太陽、仕事しすぎ')]), ['m1']);
   assert.equal(result.action, 'respond');
   assert.equal(result.usedWeb, false);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.match(result.answer, /太陽/);
 });
 
@@ -116,7 +116,11 @@ test('GC-10: 自発参加はcooldown中に本文生成へ進まない', async ()
     logger,
     model: {
       chat() {
-        assert.fail();
+        return reply({
+          action: 'respond',
+          reasonCode: 'natural_contribution',
+          targetMessageIds: ['m1'],
+        });
       },
     },
   });

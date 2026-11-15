@@ -62,6 +62,7 @@ function harness(t, { chat, mode = 'ambient', conversation = {} } = {}) {
   );
   const model = {
     async chat(request) {
+      if (request.web) return { ...output({}), content: '回答案', usedWeb: false, sources: [] };
       calls.model.push(request);
       if (chat) return chat(request);
       assert.fail('unexpected model request');

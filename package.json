@@ -23,6 +23,7 @@
     "security-smoke": "node --env-file-if-exists=.env scripts/internal-exposure-smoke.js",
     "topic-smoke": "node --env-file-if-exists=.env scripts/topic-boundary-smoke.js",
     "smoke": "node --env-file-if-exists=.env scripts/integration-smoke.js",
+    "web-smoke": "node --env-file-if-exists=.env scripts/web-smoke.js",
     "image-smoke": "node --env-file-if-exists=.env scripts/image-smoke.js",
     "participation-smoke": "node --env-file-if-exists=.env scripts/participation-smoke.js",
     "quality-smoke": "node --env-file-if-exists=.env scripts/conversation-quality-smoke.js",

@@ -11,7 +11,6 @@ import { DiscordBot } from './discord/bot.js';
 import { createLogger } from './observability/logger.js';
 import { ProfileService } from './profile/profile-service.js';
 import { openDatabase } from './storage/database.js';
-import { SearxngSearchProvider } from './tools/web-search.js';
 
 const logger = createLogger();
 
@@ -34,16 +33,11 @@ async function main() {
       : null,
     cooldownSeconds: config.images.cooldownSeconds,
   });
-  const searchProvider =
-    config.web.enabled && config.web.provider === 'searxng'
-      ? new SearxngSearchProvider(config.web)
-      : null;
   const contextBuilder = new ContextBuilder({ database, config });
   const profileService = new ProfileService({ model, config, logger });
   const sessionService = new SessionService({ database, config, model, logger });
   const orchestrator = new ConversationOrchestrator({
     model,
-    searchProvider,
     profileService,
     config,
     logger,
@@ -63,7 +57,6 @@ async function main() {
     model,
     modelSettings,
     imageService,
-    searchProvider,
     profileService,
     contextBuilder,
     sessionService,

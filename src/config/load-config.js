@@ -7,9 +7,12 @@ import { normalizeResponseMode } from '../conversation/response-mode.js';
 
 const snowflake = z.string().regex(/^\d{17,20}$/, 'Discord IDは17〜20桁の文字列で指定してください');
 
-function isLoopbackUrl(value) {
-  const hostname = new URL(value).hostname.toLowerCase();
-  return ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
+function migrateWebConfig(value) {
+  if (value?.provider === 'searxng' || value?.provider === 'disabled') {
+    // 旧URL・10秒timeout・結果件数はClaudeへ引き継がない。
+    return { enabled: value.enabled ?? false, provider: 'claude' };
+  }
+  return value;
 }
 
 const channelSchema = z.object({
@@ -54,15 +57,19 @@ export const configSchema = z
         cooldownSeconds: z.number().int().min(0).max(3600).default(60),
       })
       .prefault({}),
-    web: z.object({
-      enabled: z.boolean().default(false),
-      provider: z.enum(['searxng', 'disabled']).default('disabled'),
-      baseUrl: z.url(),
-      timeoutMs: z.number().int().min(1000).max(30000).default(10000),
-      maxResults: z.number().int().min(1).max(10).default(5),
-      maxFetchesPerTurn: z.number().int().min(0).max(3).default(2),
-      maxBytesPerPage: z.number().int().min(65536).max(2_097_152).default(1_048_576),
-    }),
+    web: z.preprocess(
+      migrateWebConfig,
+      z
+        .object({
+          enabled: z.boolean().default(true),
+          provider: z.literal('claude').default('claude'),
+          timeoutMs: z.number().int().min(5000).max(180000).default(120000),
+          maxSearches: z.number().int().min(1).max(5).default(3),
+          maxFetches: z.number().int().min(0).max(3).default(2),
+          maxContentTokens: z.number().int().min(1000).max(20000).default(6000),
+        })
+        .prefault({}),
+    ),
     privacy: z.object({
       messageRetentionHours: z.number().int().min(1).max(72).default(24),
       sessionSummaryRetentionHours: z.number().int().min(1).max(72).default(24),
@@ -100,14 +107,6 @@ export const configSchema = z
           message: 'maxDebounceMsはdebounceMs以上にしてください',
         });
       }
-    }
-
-    if (config.web.enabled && !isLoopbackUrl(config.web.baseUrl)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['web', 'baseUrl'],
-        message: 'MVPではSearXNGのloopback URLだけを許可します',
-      });
     }
   });
 

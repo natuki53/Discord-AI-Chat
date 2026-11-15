@@ -3,7 +3,6 @@ import { ModelSettingsService } from '../src/ai/model-settings.js';
 import { renderSvg } from '../src/ai/svg-renderer.js';
 import { loadConfig } from '../src/config/load-config.js';
 import { openDatabase } from '../src/storage/database.js';
-import { SearxngSearchProvider } from '../src/tools/web-search.js';
 
 const offline = process.argv.includes('--offline');
 const checks = [];
@@ -49,11 +48,13 @@ if (!offline && config) {
     if (!health.ok) throw new Error(`model not found: ${config.llm.model}`);
     return `${config.llm.model} (effort: ${config.llm.effort})`;
   });
-  if (config.web.enabled && config.web.provider === 'searxng') {
+  if (config.web.enabled) {
     await check('web-search', async () => {
-      const health = await new SearxngSearchProvider(config.web).health();
-      if (!health.ok) throw new Error(`HTTP ${health.status}`);
-      return 'searxng';
+      const model = new ClaudeClient(config.llm);
+      if (database) new ModelSettingsService({ config, database, model });
+      const health = await model.webHealth();
+      if (!health.ok) throw new Error('Claude model web search capability unavailable');
+      return 'claude (model supports web search; run web-smoke for live verification)';
     });
   }
   await check('discord-token', async () => {
