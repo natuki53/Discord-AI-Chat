@@ -13,7 +13,7 @@ function isLoopbackUrl(value) {
 
 const channelSchema = z.object({
   id: snowflake,
-  mode: z.enum(['all', 'ambient', 'mention', 'paused']).default('all'),
+  mode: z.enum(['all', 'ambient', 'mention', 'paused']).default('ambient'),
   debounceMs: z.number().int().min(250).max(30_000).default(2500),
   maxDebounceMs: z.number().int().min(500).max(60_000).default(8000),
   sessionIdleMinutes: z.number().int().min(1).max(1440).default(15),
@@ -72,6 +72,10 @@ export const configSchema = z
       topicBoundaryLookbackMessages: z.number().int().min(4).max(30).default(12),
       maxResponseCharacters: z.number().int().min(100).max(1900).default(1800),
       globalConcurrency: z.number().int().min(1).max(2).default(1),
+      ambientCooldownSeconds: z.number().int().min(0).max(3600).default(20),
+      ambientMaxAgeSeconds: z.number().int().min(5).max(300).default(45),
+      directRequestMaxAgeSeconds: z.number().int().min(30).max(900).default(180),
+      maxPendingMessages: z.number().int().min(1).max(200).default(50),
     }),
   })
   .superRefine((config, context) => {

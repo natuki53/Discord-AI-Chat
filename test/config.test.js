@@ -15,6 +15,23 @@ test('正常な設定を受理する', () => {
   });
 });
 
+test('省略時はambientを標準とし、明示モードと参加頻度の設定を維持する', () => {
+  const config = validConfig();
+  delete config.discord.channels[0].mode;
+  const parsed = configSchema.parse(config);
+  assert.equal(parsed.discord.channels[0].mode, 'ambient');
+  assert.equal(parsed.conversation.ambientCooldownSeconds, 20);
+  assert.equal(parsed.conversation.maxPendingMessages, 50);
+  for (const mode of ['ambient', 'mention', 'paused']) {
+    config.discord.channels[0].mode = mode;
+    assert.equal(configSchema.parse(config).discord.channels[0].mode, mode);
+  }
+  config.discord.channels[0].mode = 'all';
+  assert.equal(configSchema.parse(config).discord.channels[0].mode, 'all');
+  config.conversation.ambientCooldownSeconds = -1;
+  assert.throws(() => configSchema.parse(config));
+});
+
 test('Discord IDをnumberで受け取らない', () => {
   const config = validConfig();
   config.discord.guildId = 123;

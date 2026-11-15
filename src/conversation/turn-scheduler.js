@@ -1,8 +1,17 @@
 export class TurnScheduler {
-  constructor({ processTurn, resolveChannelConfig, globalConcurrency = 1, clock = globalThis }) {
+  constructor({
+    processTurn,
+    resolveChannelConfig,
+    globalConcurrency = 1,
+    maxPendingMessages = 50,
+    onOverflow = () => {},
+    clock = globalThis,
+  }) {
     this.processTurn = processTurn;
     this.resolveChannelConfig = resolveChannelConfig;
     this.globalConcurrency = globalConcurrency;
+    this.maxPendingMessages = maxPendingMessages;
+    this.onOverflow = onOverflow;
     this.clock = clock;
     this.channels = new Map();
     this.readyQueue = [];
@@ -12,7 +21,7 @@ export class TurnScheduler {
     this.idleWaiters = [];
   }
 
-  enqueue({ guildId, channelId, messageId }) {
+  enqueue({ guildId, channelId, messageId, priority = false }) {
     if (!this.accepting) return false;
     const key = `${guildId}:${channelId}`;
     let state = this.channels.get(key);
@@ -22,6 +31,7 @@ export class TurnScheduler {
         guildId,
         channelId,
         pendingMessageIds: [],
+        priorities: new Set(),
         firstQueuedAt: null,
         lastQueuedAt: null,
         timer: null,
@@ -30,9 +40,18 @@ export class TurnScheduler {
       this.channels.set(key, state);
     }
 
-    if (!state.pendingMessageIds.includes(messageId)) {
-      state.pendingMessageIds.push(messageId);
+    if (state.pendingMessageIds.includes(messageId)) return true;
+    if (state.pendingMessageIds.length >= this.maxPendingMessages) {
+      const evictable = state.pendingMessageIds.findIndex((id) => !state.priorities.has(id));
+      if (evictable < 0) {
+        if (!priority) this.onOverflow({ guildId, channelId, messageIds: [messageId] });
+        return false; // 直接依頼はDBに残し、現在ターン終了後に再取得する。
+      }
+      const [evicted] = state.pendingMessageIds.splice(evictable, 1);
+      this.onOverflow({ guildId, channelId, messageIds: [evicted] });
     }
+    state.pendingMessageIds.push(messageId);
+    if (priority) state.priorities.add(messageId);
     const now = this.now();
     state.firstQueuedAt ??= now;
     state.lastQueuedAt = now;
@@ -72,7 +91,8 @@ export class TurnScheduler {
       const state = this.channels.get(key);
       if (!state || state.running || state.pendingMessageIds.length === 0) continue;
 
-      const messageIds = state.pendingMessageIds.splice(0);
+      const messageIds = state.pendingMessageIds.splice(0, 50);
+      for (const messageId of messageIds) state.priorities.delete(messageId);
       state.firstQueuedAt = null;
       state.lastQueuedAt = null;
       state.running = true;

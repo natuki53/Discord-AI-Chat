@@ -24,7 +24,9 @@
     "topic-smoke": "node --env-file-if-exists=.env scripts/topic-boundary-smoke.js",
     "smoke": "node --env-file-if-exists=.env scripts/integration-smoke.js",
     "image-smoke": "node --env-file-if-exists=.env scripts/image-smoke.js",
-    "quality-smoke": "node --env-file-if-exists=.env scripts/conversation-quality-smoke.js"
+    "participation-smoke": "node --env-file-if-exists=.env scripts/participation-smoke.js",
+    "quality-smoke": "node --env-file-if-exists=.env scripts/conversation-quality-smoke.js",
+    "context-smoke": "node --env-file-if-exists=.env scripts/context-quality-smoke.js"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",

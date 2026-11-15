@@ -6,7 +6,7 @@ discord:
   adminRoleIds: []
   channels:
     - id: '000000000000000001'
-      mode: all
+      mode: ambient
       debounceMs: 2500
       maxDebounceMs: 8000
       sessionIdleMinutes: 15
@@ -57,3 +57,7 @@ conversation:
   topicBoundaryLookbackMessages: 12
   maxResponseCharacters: 1800
   globalConcurrency: 1
+  ambientCooldownSeconds: 20
+  ambientMaxAgeSeconds: 45
+  directRequestMaxAgeSeconds: 180
+  maxPendingMessages: 50

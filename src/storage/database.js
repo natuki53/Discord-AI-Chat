@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS channels (
   mode_override TEXT,
   previous_mode TEXT,
   version INTEGER NOT NULL DEFAULT 0,
+  context_revision INTEGER NOT NULL DEFAULT 0,
   active_session_id TEXT,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (guild_id, channel_id)
@@ -47,6 +48,8 @@ CREATE TABLE IF NOT EXISTS messages (
   author_type TEXT NOT NULL,
   content TEXT,
   reply_to_message_id TEXT,
+  mentioned_bot INTEGER NOT NULL DEFAULT 0,
+  reply_to_author_type TEXT NOT NULL DEFAULT 'unknown',
   created_at TEXT NOT NULL,
   edited_at TEXT,
   deleted_at TEXT,
@@ -129,6 +132,23 @@ function plusDays(date, days) {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 }
 
+function storedMessage(row) {
+  return {
+    messageId: row.message_id,
+    sessionId: row.session_id,
+    authorId: row.author_id,
+    authorName: row.author_name,
+    authorType: row.author_type,
+    content: row.content,
+    replyToMessageId: row.reply_to_message_id,
+    mentionedBot: Boolean(row.mentioned_bot),
+    replyToAuthorType: row.reply_to_author_type ?? 'unknown',
+    createdAt: row.created_at,
+    editedAt: row.edited_at,
+    processedAt: row.processed_at,
+  };
+}
+
 export class DatabaseStore {
   constructor(filePath, config) {
     const absolute = path.resolve(filePath);
@@ -139,6 +159,16 @@ export class DatabaseStore {
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('busy_timeout = 5000');
     this.db.exec(MIGRATION);
+    // 既存DBにも宛先と、本文・設定の無効化を表すrevisionを追加する。
+    for (const [table, column, definition] of [
+      ['channels', 'context_revision', 'INTEGER NOT NULL DEFAULT 0'],
+      ['messages', 'mentioned_bot', 'INTEGER NOT NULL DEFAULT 0'],
+      ['messages', 'reply_to_author_type', "TEXT NOT NULL DEFAULT 'unknown'"],
+    ]) {
+      if (!this.db.pragma(`table_info(${table})`).some((item) => item.name === column)) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      }
+    }
   }
 
   close() {
@@ -198,6 +228,7 @@ export class DatabaseStore {
       mode: row.mode_override ?? row.configured_mode,
       previousMode: row.previous_mode,
       version: row.version,
+      contextRevision: row.context_revision,
       activeSessionId: row.active_session_id,
     };
   }
@@ -210,7 +241,8 @@ export class DatabaseStore {
     this.db
       .prepare(
         `UPDATE channels
-         SET mode_override = ?, previous_mode = ?, updated_at = ?
+         SET mode_override = ?, previous_mode = ?, updated_at = ?,
+             version = version + 1, context_revision = context_revision + 1
          WHERE guild_id = ? AND channel_id = ?`,
       )
       .run(mode, previous, now, guildId, channelId);
@@ -384,7 +416,8 @@ export class DatabaseStore {
         .run(channel.activeSessionId);
       this.db
         .prepare(
-          `UPDATE channels SET active_session_id = NULL, version = version + 1, updated_at = ?
+          `UPDATE channels SET active_session_id = NULL, version = version + 1,
+             context_revision = context_revision + 1, updated_at = ?
            WHERE guild_id = ? AND channel_id = ?`,
         )
         .run(now, guildId, channelId);
@@ -400,8 +433,9 @@ export class DatabaseStore {
         .prepare(
           `INSERT OR IGNORE INTO messages
            (message_id, guild_id, channel_id, session_id, author_id, author_name, author_type,
-            content, reply_to_message_id, created_at, expires_at, ingested_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            content, reply_to_message_id, mentioned_bot, reply_to_author_type,
+            created_at, expires_at, ingested_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           message.messageId,
@@ -413,6 +447,8 @@ export class DatabaseStore {
           message.authorType,
           message.content,
           message.replyToMessageId,
+          message.mentionedBot ? 1 : 0,
+          message.replyToAuthorType ?? 'unknown',
           message.createdAt,
           plusHours(now, retentionHours),
           now.toISOString(),
@@ -435,19 +471,27 @@ export class DatabaseStore {
     return transaction();
   }
 
-  updateMessage({ messageId, content, editedAt, guildId, channelId }) {
+  updateMessage({ messageId, content, editedAt, guildId, channelId, mentionedBot }) {
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
       const result = this.db
         .prepare(
-          `UPDATE messages SET content = ?, edited_at = ?
-           WHERE message_id = ? AND deleted_at IS NULL`,
+          `UPDATE messages SET content = ?, edited_at = ?, mentioned_bot = COALESCE(?, mentioned_bot)
+           WHERE message_id = ? AND guild_id = ? AND channel_id = ? AND deleted_at IS NULL`,
         )
-        .run(content, editedAt, messageId);
+        .run(
+          content,
+          editedAt,
+          mentionedBot === undefined ? null : Number(mentionedBot),
+          messageId,
+          guildId,
+          channelId,
+        );
       if (result.changes > 0) {
+        this.invalidateMessageSummary(messageId);
         this.db
           .prepare(
-            `UPDATE channels SET version = version + 1, updated_at = ?
+            `UPDATE channels SET version = version + 1, context_revision = context_revision + 1, updated_at = ?
              WHERE guild_id = ? AND channel_id = ?`,
           )
           .run(now, guildId, channelId);
@@ -463,13 +507,14 @@ export class DatabaseStore {
       const result = this.db
         .prepare(
           `UPDATE messages SET content = NULL, deleted_at = ?, processed_at = COALESCE(processed_at, ?)
-           WHERE message_id = ?`,
+           WHERE message_id = ? AND guild_id = ? AND channel_id = ?`,
         )
-        .run(now, now, messageId);
+        .run(now, now, messageId, guildId, channelId);
       if (result.changes > 0) {
+        this.invalidateMessageSummary(messageId);
         this.db
           .prepare(
-            `UPDATE channels SET version = version + 1, updated_at = ?
+            `UPDATE channels SET version = version + 1, context_revision = context_revision + 1, updated_at = ?
              WHERE guild_id = ? AND channel_id = ?`,
           )
           .run(now, guildId, channelId);
@@ -483,35 +528,97 @@ export class DatabaseStore {
     return this.db
       .prepare(
         `SELECT * FROM (
-           SELECT message_id, author_id, author_name, author_type, content, reply_to_message_id,
-                  created_at, edited_at
+           SELECT *
            FROM messages
            WHERE guild_id = ? AND channel_id = ? AND session_id = ?
-             AND deleted_at IS NULL AND content IS NOT NULL
+             AND deleted_at IS NULL AND content IS NOT NULL AND expires_at >= ?
            ORDER BY created_at DESC, message_id DESC
            LIMIT ?
          ) ORDER BY created_at ASC, message_id ASC`,
       )
-      .all(guildId, channelId, sessionId, limit)
-      .map((row) => ({
-        messageId: row.message_id,
-        authorId: row.author_id,
-        authorName: row.author_name,
-        authorType: row.author_type,
-        content: row.content,
-        replyToMessageId: row.reply_to_message_id,
-        createdAt: row.created_at,
-        editedAt: row.edited_at,
-      }));
+      .all(guildId, channelId, sessionId, new Date().toISOString(), limit)
+      .map(storedMessage);
+  }
+
+  getMessagesByIds(guildId, channelId, messageIds, { unprocessedOnly = false } = {}) {
+    if (!messageIds.length) return [];
+    const ids = [...new Set(messageIds)];
+    return this.db
+      .prepare(
+        `SELECT * FROM messages
+      WHERE guild_id = ? AND channel_id = ? AND message_id IN (${ids.map(() => '?').join(',')})
+        AND deleted_at IS NULL AND content IS NOT NULL AND expires_at >= ?
+        ${unprocessedOnly ? 'AND processed_at IS NULL' : ''}
+      ORDER BY created_at ASC, message_id ASC`,
+      )
+      .all(guildId, channelId, ...ids, new Date().toISOString())
+      .map(storedMessage);
+  }
+
+  getPreviousSessionMessages(guildId, channelId, activeSessionId, limit, messageIds = []) {
+    const timestamp = new Date().toISOString();
+    return this.db
+      .prepare(
+        `SELECT * FROM (
+           SELECT m.* FROM messages m
+           JOIN conversation_sessions s ON s.session_id = m.session_id
+           JOIN conversation_sessions active ON active.session_id = ?
+           WHERE m.guild_id = ? AND m.channel_id = ? AND m.session_id != active.session_id
+             AND active.guild_id = m.guild_id AND active.channel_id = m.channel_id
+             AND active.status = 'active' AND s.status = 'closed'
+             AND s.started_at <= active.started_at AND s.expires_at >= ?
+             AND m.deleted_at IS NULL AND m.content IS NOT NULL AND m.expires_at >= ?
+             ${messageIds.length ? `AND m.message_id IN (${messageIds.map(() => '?').join(',')})` : ''}
+             AND NOT EXISTS (
+               SELECT 1 FROM conversation_sessions boundary
+               WHERE boundary.guild_id = m.guild_id AND boundary.channel_id = m.channel_id
+                 AND boundary.status = 'deleted' AND boundary.started_at >= s.started_at
+                 AND boundary.started_at <= active.started_at
+             )
+           ORDER BY m.created_at DESC, m.message_id DESC LIMIT ?
+         ) ORDER BY created_at ASC, message_id ASC`,
+      )
+      .all(activeSessionId, guildId, channelId, timestamp, timestamp, ...messageIds, limit)
+      .map(storedMessage);
+  }
+
+  getLastBotMessage(guildId, channelId) {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM messages
+      WHERE guild_id = ? AND channel_id = ? AND author_type = 'bot'
+        AND deleted_at IS NULL AND content IS NOT NULL AND expires_at >= ?
+      ORDER BY created_at DESC, message_id DESC LIMIT 1`,
+      )
+      .get(guildId, channelId, new Date().toISOString());
+    return row ? storedMessage(row) : null;
+  }
+
+  invalidateMessageSummary(messageId) {
+    this.db
+      .prepare(
+        `UPDATE conversation_sessions SET summary_json = NULL, summary_message_count = 0
+      WHERE session_id = (SELECT session_id FROM messages WHERE message_id = ?)`,
+      )
+      .run(messageId);
+  }
+
+  updateMessageAddressing(messageId, { mentionedBot, replyToAuthorType }) {
+    this.db
+      .prepare(
+        'UPDATE messages SET mentioned_bot = ?, reply_to_author_type = ? WHERE message_id = ?',
+      )
+      .run(Number(mentionedBot), replyToAuthorType, messageId);
   }
 
   countSessionMessages(sessionId) {
     return this.db
       .prepare(
         `SELECT COUNT(*) AS count FROM messages
-         WHERE session_id = ? AND author_type = 'human' AND deleted_at IS NULL`,
+           WHERE session_id = ? AND author_type = 'human' AND deleted_at IS NULL
+             AND content IS NOT NULL AND expires_at >= ?`,
       )
-      .get(sessionId).count;
+      .get(sessionId, new Date().toISOString()).count;
   }
 
   getUnprocessedMessages(guildId, channelId, limit = 100) {
@@ -519,10 +626,10 @@ export class DatabaseStore {
       .prepare(
         `SELECT message_id FROM messages
          WHERE guild_id = ? AND channel_id = ? AND author_type = 'human'
-           AND processed_at IS NULL AND deleted_at IS NULL
+           AND processed_at IS NULL AND deleted_at IS NULL AND content IS NOT NULL AND expires_at >= ?
          ORDER BY created_at ASC LIMIT ?`,
       )
-      .all(guildId, channelId, limit)
+      .all(guildId, channelId, new Date().toISOString(), limit)
       .map((row) => row.message_id);
   }
 
@@ -664,6 +771,15 @@ export class DatabaseStore {
   forgetUser(guildId, userId) {
     const now = new Date().toISOString();
     const transaction = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE channels SET version = version + 1,
+        context_revision = context_revision + 1, updated_at = ?
+        WHERE guild_id = ? AND channel_id IN (
+          SELECT DISTINCT channel_id FROM messages WHERE guild_id = ? AND author_id = ?
+        )`,
+        )
+        .run(now, guildId, guildId, userId);
       const messageResult = this.db
         .prepare(
           `UPDATE messages SET content = NULL, deleted_at = ?, processed_at = COALESCE(processed_at, ?)

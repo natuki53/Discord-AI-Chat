@@ -54,6 +54,8 @@ async function main() {
     processTurn: (turn) => bot.processTurn(turn),
     resolveChannelConfig: (channelId) => channelConfig(config, channelId),
     globalConcurrency: config.conversation.globalConcurrency,
+    maxPendingMessages: config.conversation.maxPendingMessages,
+    onOverflow: ({ messageIds }) => database.markMessagesProcessed(messageIds),
   });
   const services = {
     config,
