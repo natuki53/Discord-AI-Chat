@@ -230,7 +230,7 @@ export class ContextBuilder {
     const capabilities = this.config.images?.enabled
       ? '\nイラスト生成は /ai-image prompt:描いてほしい内容 で利用できます。通常会話からは自動実行せず、依頼されたらこのコマンドを短く案内してください。'
       : '';
-    const systemPrompt = system + capabilities;
+    const systemPrompt = `${system}${capabilities}\n設定・使い方・削除は /ai にまとめています。`;
 
     const conversationHeader = `現在日時: ${currentDate}
 応答モード: ${channel.mode}

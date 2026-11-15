@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { normalizeResponseMode } from '../conversation/response-mode.js';
 
 const MIGRATION = `
 CREATE TABLE IF NOT EXISTS model_settings (
@@ -210,7 +211,21 @@ export class DatabaseStore {
     `);
     const transaction = this.db.transaction(() => {
       for (const channel of this.config.discord.channels) {
-        statement.run(this.config.discord.guildId, channel.id, channel.mode, now);
+        statement.run(
+          this.config.discord.guildId,
+          channel.id,
+          normalizeResponseMode(channel.mode),
+          now,
+        );
+        this.db
+          .prepare(
+            `UPDATE channels
+          SET mode_override = CASE WHEN mode_override = 'all' THEN 'ambient' ELSE mode_override END,
+              previous_mode = CASE WHEN previous_mode = 'all' THEN 'ambient' ELSE previous_mode END,
+              version = version + 1, context_revision = context_revision + 1
+          WHERE guild_id = ? AND channel_id = ? AND (mode_override = 'all' OR previous_mode = 'all')`,
+          )
+          .run(this.config.discord.guildId, channel.id);
       }
     });
     transaction();
@@ -234,6 +249,7 @@ export class DatabaseStore {
   }
 
   setChannelMode(guildId, channelId, mode) {
+    mode = normalizeResponseMode(mode);
     const current = this.getChannel(guildId, channelId);
     if (!current) throw new Error('対象チャンネルが設定されていません');
     const now = new Date().toISOString();
@@ -668,6 +684,18 @@ export class DatabaseStore {
     return this.getPreferences(guildId, [userId]).get(userId) ?? null;
   }
 
+  invalidateUserContext(guildId, userId) {
+    this.db
+      .prepare(
+        `UPDATE channels SET version = version + 1,
+      context_revision = context_revision + 1, updated_at = ?
+      WHERE guild_id = ? AND channel_id IN (
+        SELECT DISTINCT channel_id FROM messages WHERE guild_id = ? AND author_id = ?
+      )`,
+      )
+      .run(new Date().toISOString(), guildId, guildId, userId);
+  }
+
   setPreference(guildId, userId, preference) {
     const now = new Date().toISOString();
     this.db
@@ -693,15 +721,17 @@ export class DatabaseStore {
         now,
         now,
       );
+    this.invalidateUserContext(guildId, userId);
     return this.getPreference(guildId, userId);
   }
 
   resetPreference(guildId, userId) {
-    return (
+    const removed =
       this.db
         .prepare('DELETE FROM user_preferences WHERE guild_id = ? AND user_id = ?')
-        .run(guildId, userId).changes > 0
-    );
+        .run(guildId, userId).changes > 0;
+    if (removed) this.invalidateUserContext(guildId, userId);
+    return removed;
   }
 
   getProfiles(guildId, userIds) {
@@ -757,15 +787,17 @@ export class DatabaseStore {
         profile.refreshedAt ?? now,
         now,
       );
+    this.invalidateUserContext(guildId, userId);
     return this.getProfile(guildId, userId);
   }
 
   resetProfile(guildId, userId) {
-    return (
+    const removed =
       this.db
         .prepare('DELETE FROM user_profiles WHERE guild_id = ? AND user_id = ?')
-        .run(guildId, userId).changes > 0
-    );
+        .run(guildId, userId).changes > 0;
+    if (removed) this.invalidateUserContext(guildId, userId);
+    return removed;
   }
 
   forgetUser(guildId, userId) {

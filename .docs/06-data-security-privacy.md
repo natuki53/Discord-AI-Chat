@@ -14,7 +14,9 @@
 - 利用者が保存内容、用途、削除方法を確認できるようにする。
 - Discordメッセージをモデル学習、fine-tuning、評価datasetの素材にしない。
 - 外部検索には公開情報の検索に必要な短いqueryだけを送る。
-- 応答品質の履歴分析は保持期間内・読み取り専用・local LLMに限定し、個人profileや学習datasetを作らない。
+- 応答品質の履歴分析は保持期間内・読み取り専用とし、個人profileや学習datasetを作らない。Claude APIへ本文を送信する。
+
+2026-11-12のClaude API移行後、会話生成・要約・話題判定・プロフィール抽出に必要な会話文脈、表示名・メッセージID、本人登録情報、参照したWeb資料はAnthropicへ送信する。ローカルDBの保持期限と`/ai-forget`はAPI側の削除を意味しない。API側の保持・削除はAnthropicとの契約・設定に従う。APIキーは`ANTHROPIC_API_KEY`で渡し、YAMLやログに保存しない。
 
 ## 2. Discordポリシー境界
 

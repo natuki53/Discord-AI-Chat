@@ -3,6 +3,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { z } from 'zod';
 import { CLAUDE_MODELS, EFFORT_LEVELS } from '../ai/model-settings.js';
+import { normalizeResponseMode } from '../conversation/response-mode.js';
 
 const snowflake = z.string().regex(/^\d{17,20}$/, 'Discord IDは17〜20桁の文字列で指定してください');
 
@@ -13,7 +14,10 @@ function isLoopbackUrl(value) {
 
 const channelSchema = z.object({
   id: snowflake,
-  mode: z.enum(['all', 'ambient', 'mention', 'paused']).default('ambient'),
+  mode: z
+    .enum(['all', 'ambient', 'mention', 'paused'])
+    .default('ambient')
+    .transform(normalizeResponseMode),
   debounceMs: z.number().int().min(250).max(30_000).default(2500),
   maxDebounceMs: z.number().int().min(500).max(60_000).default(8000),
   sessionIdleMinutes: z.number().int().min(1).max(1440).default(15),

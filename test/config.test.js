@@ -5,7 +5,7 @@ import { validConfig } from './fixtures.js';
 
 test('正常な設定を受理する', () => {
   const parsed = configSchema.parse(validConfig());
-  assert.equal(parsed.discord.channels[0].mode, 'all');
+  assert.equal(parsed.discord.channels[0].mode, 'ambient');
   assert.deepEqual(parsed.images, {
     enabled: true,
     provider: 'claude-svg',
@@ -27,7 +27,7 @@ test('省略時はambientを標準とし、明示モードと参加頻度の設�
     assert.equal(configSchema.parse(config).discord.channels[0].mode, mode);
   }
   config.discord.channels[0].mode = 'all';
-  assert.equal(configSchema.parse(config).discord.channels[0].mode, 'all');
+  assert.equal(configSchema.parse(config).discord.channels[0].mode, 'ambient');
   config.conversation.ambientCooldownSeconds = -1;
   assert.throws(() => configSchema.parse(config));
 });

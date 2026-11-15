@@ -6,13 +6,29 @@
 - OS: Ubuntu 26.04 LTS
 - 実行方式: Docker Compose（実機確認後の採用方式）
 - Bot本体: Node.js単一process
-- LLM: 同一ホストのOllama service
+- LLM: Anthropic Claude API（既定 `claude-sonnet-5-5`）
 - DB: local SQLite
 - 外部公開port: なし
 - 管理: SSH、Docker Compose、Docker logs、Discord slash command
 - Docker: 稼働確認済み。`restart: unless-stopped`で常時運転する
 
-実機調査でUbuntu 26.04 LTS、Docker 29、Docker Compose v5、Ollamaのloopback稼働を確認済み。Botはhost networkを使用してOllama `127.0.0.1:11434`と、loopbackへpublishしたSearXNG `127.0.0.1:8888`へ接続する。Docker restart policyによりuser lingerやログイン状態へ依存しない。
+Botはhost networkを使用してClaude API `https://api.anthropic.com`と、loopbackへpublishしたSearXNG `127.0.0.1:8888`へ接続する。Docker restart policyによりuser lingerやログイン状態へ依存しない。以下のGPU benchmarkやOllama実機調査は初期配備時の記録であり、Claude API利用時はGPU・Ollamaを必要としない。
+
+### Claude APIへの移行（2026-11-12）
+
+1. `runtime/bot.env`へ`ANTHROPIC_API_KEY`を追加する。ファイル権限`0600`を維持し、キーをGitやログへ残さない。
+2. `runtime/bot.yaml`の`llm.baseUrl`を`https://api.anthropic.com`、`llm.model`を`claude-sonnet-5-5`へ変更する。`temperature`、`keepAlive`を削除し、`effort: medium`、`maxOutputTokens: 4096`を初期値にする。
+3. `docker compose up -d --build bot`で環境変数とコードを反映する。単なるrestartではenv変更は反映されない。
+4. `docker compose exec bot npm run doctor`とDiscordの`/ai`の接続確認でキーとモデルへのアクセスを確認する。モデル確認はModels APIを使用し、文章生成は行わない。
+5. 雑談・話題切替・会話要約・Web検索・プロフィール抽出を確認する。生成を行うsmokeコマンドにはAPI利用料金が発生する。
+
+旧Ollama設定は起動時に拒否する。`contextTokens`はアプリが送信する直近会話の量を制限する値であり、Claude APIへ`num_ctx`として送らない。外部送信とローカル保持の違いはREADMEおよびメニューの「データと削除」で説明する。既存のOllama serviceの停止・削除はこの移行処理に含まれない。
+
+### メニューからの設定
+
+`docker compose exec bot npm run register-commands`で`/ai`と`/ai-image`を登録し、`docker compose exec bot npm run register-commands -- --check`で読み取り確認する。管理者は`/ai`→「チャンネル設定」から応答方法と「速さ優先／じっくり」を選ぶ。選択はSQLiteへ保存し、起動時にYAMLより優先する。現在の接続は同じ画面の「接続を確認」または`npm run doctor`で確認する。モデルの変更は全LLM処理へ次のAPI呼び出しから反映する。
+
+両モデルで全5effortとadaptive thinkingを使用する。高いeffortで回答が途中で切れる場合は`llm.maxOutputTokens`を調整する（thinkingを含む上限、最大32768）。APIキーには有効期限があるため、期限前に新しいキーへ更新してBotを再作成する。
 
 ## 2. 配置構成
 
@@ -40,13 +56,13 @@ Bot imageは非rootの`node` userで実行し、全Linux capabilityをdropする
 | From         | To                  | Protocol/Port | 用途                | 必須                     |
 | ------------ | ------------------- | ------------- | ------------------- | ------------------------ |
 | Bot          | Discord Gateway/API | WSS/HTTPS 443 | 受信・投稿          | 必須                     |
-| Bot          | `127.0.0.1:11434`   | HTTP          | Ollama chat         | 必須                     |
+| Bot          | `api.anthropic.com` | HTTPS 443     | Claude API          | 必須                     |
 | Bot          | Search provider     | HTTPS 443     | 最新情報検索        | Web有効時                |
 | Bot          | Public Web          | HTTPS 443     | page fetch          | providerが代行しない場合 |
 | LAN/Internet | Bot                 | なし          | inbound serviceなし | 拒否                     |
 | Bot          | LAN private IP      | なし          | SSRF防止            | 拒否                     |
 
-Ollamaを`0.0.0.0`へbindしない。別ホストへ分離するまではloopbackだけで十分である。
+Claude APIの接続先は公式HTTPS URLだけを許可し、認証ヘッダーを含むリクエストのredirectは拒否する。SearXNGはloopbackで運用する。
 
 ## 4. 実装開始前preflight
 
@@ -95,7 +111,7 @@ Phase 0で各候補modelに同じprompt setを実行し、次を記録する。
 ### 6.1 Docker Compose（採用方式）
 
 - `search`: SearXNGを`127.0.0.1:8888`だけへpublishする。
-- `bot`: host networkでOllamaとSearXNGへ接続し、`restart: unless-stopped`で復旧する。
+- `bot`: host networkでClaude APIとSearXNGへ接続し、`restart: unless-stopped`で復旧する。
 - 両containerで`no-new-privileges`を有効にし、Botは全capabilityをdropする。
 - 起動は`docker compose up -d --build`、状態確認は`docker compose ps`、ログ確認は`docker compose logs bot`を使う。
 
@@ -168,7 +184,7 @@ WantedBy=multi-user.target
 
 ## 8. Health check
 
-WebUIや公開HTTP endpointは作らず、image内の`scripts/doctor.js`と`/ai-status`を使う。
+WebUIや公開HTTP endpointは作らず、image内の`scripts/doctor.js`と`/ai`を使う。
 
 ### 8.1 `doctor`
 
@@ -184,17 +200,12 @@ WebUIや公開HTTP endpointは作らず、image内の`scripts/doctor.js`と`/ai-
 
 exit codeは全必須check成功で0、それ以外は非0。secretやmessage本文を表示しない。
 
-### 8.2 `/ai-status`
+### 8.2 Discordメニューからの確認
 
-表示:
+`/ai`ではこのチャンネルの応答状態を表示し、管理者の「接続を確認」でAIとWeb検索の状態を確認する。詳細な運用情報はCLIとログで扱う。
 
-- version/commit ID。
-- uptime。
-- channel mode。
-- queue lengthと現在のstate。
-- LLM model、healthy/unhealthy、直近latency。
-- Web enabled/disabled、provider、circuit状態。
-- DB healthy、最終backup時刻。
+- 通常のメニューにキュー長やeffortなどの詳細値を並べない。
+- モデルは「速さ優先／じっくり」で選び、既存の詳細設定は変更するまで維持する。
 
 表示しないもの:
 
@@ -270,7 +281,7 @@ exit codeは全必須check成功で0、それ以外は非0。secretやmessage本
 5. schema変更時はDB backupとrollback方針を確認する。
 6. `docker compose up -d search bot`で切り替える。
 7. `docker compose ps`とJSON logで`discord_ready`を確認する。
-8. `/ai-status`とlimited channelでsmoke testする。
+8. `/ai`とlimited channelでsmoke testする。
 
 ### 11.2 Rollback
 
