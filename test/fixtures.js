@@ -26,12 +26,11 @@ export function validConfig() {
     },
     web: {
       enabled: false,
-      provider: 'disabled',
-      baseUrl: 'http://127.0.0.1:8888',
-      timeoutMs: 8000,
-      maxResults: 5,
-      maxFetchesPerTurn: 2,
-      maxBytesPerPage: 1048576,
+      provider: 'claude',
+      timeoutMs: 120000,
+      maxSearches: 3,
+      maxFetches: 2,
+      maxContentTokens: 6000,
     },
     privacy: {
       messageRetentionHours: 24,

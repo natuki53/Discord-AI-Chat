@@ -425,15 +425,13 @@ async function routeInteraction(interaction, services) {
     await interaction.deferUpdate();
     const [ai, web] = await Promise.allSettled([
       services.model.health(),
-      config.web.enabled && services.searchProvider
-        ? services.searchProvider.health()
-        : Promise.resolve(null),
+      config.web.enabled ? services.model.webHealth() : Promise.resolve(null),
     ]);
     const aiOk = ai.status === 'fulfilled' && ai.value.ok;
     const webStatus = !config.web.enabled
       ? '無効'
       : web.status === 'fulfilled' && web.value?.ok
-        ? '正常'
+        ? '利用可能（Claude）'
         : '確認できませんでした';
     return display(
       interaction,

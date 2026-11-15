@@ -81,10 +81,35 @@ test('旧Ollama設定を明示的に拒否する', () => {
   assert.throws(() => configSchema.parse(config));
 });
 
-test('有効なSearXNGのLAN公開URLを拒否する', () => {
+test('旧SearXNG設定は接続先と短いtimeoutを捨てClaudeへ移行する', () => {
   const config = validConfig();
   config.web.enabled = true;
   config.web.provider = 'searxng';
   config.web.baseUrl = 'http://192.168.1.20:8888';
-  assert.throws(() => configSchema.parse(config), /loopback/);
+  config.web.timeoutMs = 10000;
+  assert.deepEqual(configSchema.parse(config).web, {
+    enabled: true,
+    provider: 'claude',
+    timeoutMs: 120000,
+    maxSearches: 3,
+    maxFetches: 2,
+    maxContentTokens: 6000,
+  });
+  config.web.enabled = false;
+  config.web.provider = 'disabled';
+  assert.equal(configSchema.parse(config).web.enabled, false);
+});
+
+test('Claude検索の回数・取得量・timeoutの上限を検証する', () => {
+  for (const [field, value] of [
+    ['maxSearches', 0],
+    ['maxSearches', 6],
+    ['maxFetches', 4],
+    ['maxContentTokens', 20001],
+    ['timeoutMs', 180001],
+  ]) {
+    const config = validConfig();
+    config.web[field] = value;
+    assert.throws(() => configSchema.parse(config));
+  }
 });

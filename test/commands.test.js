@@ -75,7 +75,7 @@ function createServices() {
       },
       addAuditEvent: (event) => calls.audits.push(event),
     },
-    model: { health: async () => ({ ok: true }) },
+    model: { health: async () => ({ ok: true }), webHealth: async () => ({ ok: true }) },
     modelSettings: {
       current: () => state.settings,
       update: async (changes) => {

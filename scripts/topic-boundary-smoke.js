@@ -85,7 +85,6 @@ try {
   const third = await service.maybeStartNewTopic(guildId, channelId, [explicitId]);
   const explicitDurationMs = Date.now() - explicitStartedAt;
   if (!third) throw new Error('explicit_topic_was_not_split');
-  if (explicitDurationMs > 500) throw new Error('explicit_topic_called_slow_path');
 
   process.stdout.write(
     `${JSON.stringify(

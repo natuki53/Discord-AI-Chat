@@ -13,7 +13,7 @@
 - 会話セッション要約。個人の性格や人間関係は推測・保存しません
 - 明示表現と構造化LLM判定による話題の自動分離。名前や「さっきの続き」で参照された会話は保持期間内で補います
 - 本人が任意登録した自己紹介・公開リンクから、明記された活動や興味だけを回答へ反映
-- SearXNGによるアカウント不要のWeb検索
+- Claude公式のWeb検索・ページ取得。検索要否、検索語、追加調査、出典選択をClaudeが判断
 - 参照URL付きの最新情報回答
 - WebUIなし。Docker Compose、CLI、Discordコマンドで運用
 
@@ -27,12 +27,14 @@
 
 2026-11-14に、表示名・指示語の解釈、話者ラベルの共有、保持期間内の以前の会話の参照、replyの連鎖、添付の未解析表示を改善し、11月15日に参加制御とあわせて本番へ反映しました。[変更・検証・配備記録](./.docs/12-conversation-context.md)を参照してください。保存済みのモデル・effort・応答モードは維持しています。会話の既定保持は24時間のままです。
 
+2026-11-16に検索・ページ取得をClaude公式ツールへ移行しました。返答の語句別の切り詰めや、話題境界の固定語句による判定も外しています。[構成・設定・検証](./.docs/15-claude-native-web.md)を参照してください。
+
 ## 必要環境
 
 - Docker Engine + Docker Compose（本番推奨）またはNode.js 24以上
 - Anthropic Consoleで発行したClaude APIキーとAPI利用枠
 - Discord Application/Bot token
-- Web検索を使う場合はSearXNG
+- Web検索を使う場合はClaude APIのWeb検索を利用できること
 
 ## ローカル準備
 
@@ -64,6 +66,7 @@ BOT_DATABASE_PATH=data/bot.sqlite3
 npm run doctor
 npm run register-commands
 npm run compare-models -- claude-haiku-5-5 claude-sonnet-5-5
+npm run web-smoke
 npm run analyze-history -- 200
 npm run audit-internal -- 1000
 npm run security-smoke
@@ -72,13 +75,13 @@ npm test
 npm start
 ```
 
-RyzenサーバーではDocker Composeを利用します。`runtime/bot.env`、`runtime/bot.yaml`、`runtime/searxng-settings.yml`を用意してから次を実行します。
+RyzenサーバーではDocker Composeを利用します。`runtime/bot.env`、`runtime/bot.yaml`を用意してから次を実行します。
 
 ```bash
 docker compose up -d --build
 ```
 
-Botはhost networkを利用し、Claude APIの`https://api.anthropic.com`へ接続します。SearXNGはbridge networkから`127.0.0.1:8888`だけへ公開されます。LAN・インターネット向けの公開ポートは追加しません。
+Botはhost networkを利用し、Claude APIの`https://api.anthropic.com`へ接続します。検索・ページ取得もAnthropic側で行い、SearXNGは不要です。LAN・インターネット向けの公開ポートは追加しません。
 
 ## Discord権限
 

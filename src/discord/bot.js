@@ -482,6 +482,8 @@ export class DiscordBot {
             channelId,
             sourceMessageCount: sourceMessageIds.length,
             usedWeb: result.usedWeb,
+            webSearchRequests: result.webSearchRequests ?? 0,
+            webFetchRequests: result.webFetchRequests ?? 0,
             promptTokens: result.promptTokens,
             outputTokens: result.outputTokens,
             latencyMs: Math.round(result.totalDurationNs / 1_000_000),
