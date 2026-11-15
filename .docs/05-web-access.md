@@ -256,13 +256,13 @@ system rule:
 
 ## 10. 回答と引用形式
 
-Discordでは長い参考文献一覧を避け、本文中を`[1]`で示し末尾へURLを置く。
+Discordでは本文中を`[1]`で示し、末尾へ参照元のタイトルをリンクとして置く。本文と参照の間に空行を入れ、URLは`< >`で囲んで大きなリンクプレビューを抑える。
 
 ```text
 Node.jsのActive LTSは現時点では○○です。[1]
 
 参照（2026-08-04取得）
-[1] Node.js Releases: https://nodejs.org/...
+[1] [Node.js Releases](<https://nodejs.org/...>)
 ```
 
 規則:
@@ -271,7 +271,8 @@ Node.jsのActive LTSは現時点では○○です。[1]
 - 架空URLを生成しない。tool resultの正規化済みURLからのみ引用する。
 - 同じURLを重複させない。
 - URL短縮サービスへ変換しない。
-- source titleはsanitizeする。
+- source titleは改行を空白へ変え、80文字までに短縮し、Markdown記号をエスケープする。
+- 回答本文の段落・改行・コードの空白を、送信前の内部ラベル・ID除去でつぶさない。
 - 検索snippetだけで断定した場合はその旨を内部confidenceへ反映し、重要主張は可能ならpage fetchで確認する。
 - Discord上限を超える場合は回答本文を短くし、参照を落とさない。
 
