@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "会話の流れを把握して参加する、ローカルLLMベースのDiscord Bot",
+  "description": "会話の流れを把握して参加する、Claude APIベースのDiscord Bot",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -16,22 +16,25 @@
     "format:check": "prettier --check .",
     "doctor": "node --env-file-if-exists=.env scripts/doctor.js",
     "register-commands": "node --env-file-if-exists=.env scripts/register-commands.js",
-    "benchmark": "node scripts/benchmark-model.js",
-    "compare-models": "node scripts/compare-models.js",
-    "analyze-history": "node scripts/analyze-conversation-history.js",
+    "benchmark": "node --env-file-if-exists=.env scripts/benchmark-model.js",
+    "compare-models": "node --env-file-if-exists=.env scripts/compare-models.js",
+    "analyze-history": "node --env-file-if-exists=.env scripts/analyze-conversation-history.js",
     "audit-internal": "node scripts/audit-internal-exposure.js",
-    "security-smoke": "node scripts/internal-exposure-smoke.js",
-    "topic-smoke": "node scripts/topic-boundary-smoke.js",
-    "smoke": "node scripts/integration-smoke.js",
-    "quality-smoke": "node scripts/conversation-quality-smoke.js"
+    "security-smoke": "node --env-file-if-exists=.env scripts/internal-exposure-smoke.js",
+    "topic-smoke": "node --env-file-if-exists=.env scripts/topic-boundary-smoke.js",
+    "smoke": "node --env-file-if-exists=.env scripts/integration-smoke.js",
+    "image-smoke": "node --env-file-if-exists=.env scripts/image-smoke.js",
+    "quality-smoke": "node --env-file-if-exists=.env scripts/conversation-quality-smoke.js"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
+    "@resvg/resvg-js": "2.6.2",
     "better-sqlite3": "13.0.2",
     "discord.js": "14.27.0",
     "ipaddr.js": "2.4.0",
     "linkedom": "0.18.13",
     "pino": "10.3.1",
+    "saxes": "6.0.0",
     "undici": "8.10.0",
     "yaml": "2.9.0",
     "zod": "4.4.3"

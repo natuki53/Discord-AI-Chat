@@ -77,6 +77,7 @@ export class DiscordBot {
 
   async stop() {
     this.stopping = true;
+    this.services.imageService?.stop();
     await this.scheduler.shutdown(30_000);
     for (const controller of this.activeControllers) controller.abort();
     this.client.destroy();

@@ -1,6 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { EmbedBuilder, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import {
+  AttachmentBuilder,
+  EmbedBuilder,
+  MessageFlags,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+} from 'discord.js';
 import { sanitizeDisplayName } from '../shared/text.js';
+import { CLAUDE_MODELS, EFFORT_LEVELS } from '../ai/model-settings.js';
 
 const ephemeral = { flags: MessageFlags.Ephemeral };
 
@@ -13,6 +20,46 @@ function changeCallout(title, description, { color = 0x5865f2, fields = [] } = {
 export function commandDefinitions() {
   return [
     new SlashCommandBuilder().setName('ai-status').setDescription('AI Botの稼働状態を表示します'),
+    new SlashCommandBuilder()
+      .setName('ai-image')
+      .setDescription('描いてほしい内容からイラストを1枚生成します')
+      .addStringOption((option) =>
+        option
+          .setName('prompt')
+          .setDescription('描いてほしい内容')
+          .setRequired(true)
+          .setMinLength(1)
+          .setMaxLength(2000),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('aspect')
+          .setDescription('画像の形')
+          .addChoices(
+            { name: '正方形', value: 'square' },
+            { name: '横長', value: 'landscape' },
+            { name: '縦長', value: 'portrait' },
+          ),
+      ),
+    new SlashCommandBuilder()
+      .setName('ai-model')
+      .setDescription('サーバー全体のClaudeモデルとeffortを確認・変更します')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .addStringOption((option) =>
+        option
+          .setName('model')
+          .setDescription('使用するモデル（省略すると維持）')
+          .addChoices(
+            { name: 'Claude Haiku 5.5', value: 'haiku' },
+            { name: 'Claude Sonnet 5.5', value: 'sonnet' },
+          ),
+      )
+      .addStringOption((option) =>
+        option
+          .setName('effort')
+          .setDescription('推論の強さ（省略すると維持）')
+          .addChoices(...EFFORT_LEVELS.map((value) => ({ name: value, value }))),
+      ),
     new SlashCommandBuilder()
       .setName('ai-privacy')
       .setDescription('AI Botが保存するデータと削除方法を表示します'),
@@ -186,6 +233,8 @@ export async function handleCommand(interaction, services) {
     config,
     database,
     model,
+    modelSettings,
+    imageService,
     searchProvider,
     profileService,
     scheduler,
@@ -213,6 +262,8 @@ export async function handleCommand(interaction, services) {
         `状態: ${llmOk ? '稼働中' : 'LLM異常'}`,
         `モード: ${channel?.mode ?? '対象外チャンネル'}`,
         `モデル: ${config.llm.model}`,
+        `Effort: ${config.llm.effort}`,
+        `画像生成: ${imageService?.available ? '利用可能' : '未設定・無効'}`,
         `Web検索: ${config.web.enabled ? (webOk ? '利用可能' : '一時利用不可') : '無効'}`,
         `待機メッセージ: ${scheduler.queueLength(interaction.channelId)}`,
         `保存期間: ${config.privacy.messageRetentionHours}時間`,
@@ -225,12 +276,153 @@ export async function handleCommand(interaction, services) {
     await interaction.reply({
       content: [
         `会話の流れを保つため、対象チャンネルの本文と会話要約を最大${config.privacy.messageRetentionHours}時間保存します。`,
+        '返答・要約・話題判定・プロフィール抽出のため、必要な会話文脈と本人登録情報、参照したWeb資料をAnthropicのClaude APIへ送信します。API側の保持・削除はAnthropicの契約・設定に従います。',
         '過去ログから個人の性格・属性・人間関係を分析または保存しません。メッセージをAIの学習にも使いません。',
         '最新情報を調べる場合は、個人情報を除いた検索語を検索サービスへ送ります。',
+        '/ai-imageの依頼文はSVGイラストを描くためClaude APIへ送信します。この処理に会話履歴やプロフィールは含めません。PNG画像とSVGファイルはDiscordへ添付し、BotのDBやディスクには保存しません。',
         '本人が /ai-profile で任意登録した自己紹介と自分の公開リンクは、明記された活動・興味だけを回答調整へ利用します。',
         '自分の設定は /ai-preferences と /ai-profile、保存中データの削除は /ai-forget で行えます。',
       ].join('\n'),
     });
+    return;
+  }
+
+  if (name === 'ai-image') {
+    const channel = database.getChannel(interaction.guildId, interaction.channelId);
+    if (!config.discord.channels.some((configured) => configured.id === interaction.channelId)) {
+      await interaction.reply({ content: 'このチャンネルはAI Botの対象外です。', ...ephemeral });
+      return;
+    }
+    if (channel?.mode === 'paused') {
+      await interaction.reply({
+        content: 'このチャンネルではAI応答を停止しています。',
+        ...ephemeral,
+      });
+      return;
+    }
+    if (!imageService?.available) {
+      await interaction.reply({
+        content: '画像生成の接続設定がまだ完了していません。管理者に確認してください。',
+        ...ephemeral,
+      });
+      return;
+    }
+    if (
+      interaction.appPermissions &&
+      !interaction.appPermissions.has(PermissionFlagsBits.AttachFiles)
+    ) {
+      await interaction.reply({
+        content: 'Botに「ファイルを添付」権限を付与してください。',
+        ...ephemeral,
+      });
+      return;
+    }
+    await interaction.deferReply();
+    let generated;
+    try {
+      generated = await imageService.generate({
+        userId: interaction.user.id,
+        prompt: interaction.options.getString('prompt', true),
+        aspect: interaction.options.getString('aspect') ?? 'square',
+        maxBytes: interaction.attachmentSizeLimit ?? 10 * 1024 * 1024,
+      });
+    } catch (error) {
+      logger.warn(
+        { event: 'image_generation_failed', error: error.name, status: error.status },
+        'image generation failed',
+      );
+      await interaction.editReply({
+        content: error.userFacing
+          ? error.message
+          : '画像を生成できませんでした。時間を置いて再試行してください。',
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+    await interaction.editReply({
+      content: 'Claudeが描いたSVGイラストです。プレビュー用のPNGと編集用のSVGを添付しました。',
+      files: [
+        new AttachmentBuilder(generated.data, {
+          name: generated.filename,
+          description: '依頼に基づいてAIで生成したイラスト',
+        }),
+        ...(generated.source
+          ? [new AttachmentBuilder(generated.source.data, { name: generated.source.filename })]
+          : []),
+      ],
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  if (name === 'ai-model') {
+    if (!isAdmin(interaction, config)) {
+      await interaction.reply({
+        content: 'この操作にはサーバー管理権限が必要です。',
+        ...ephemeral,
+      });
+      return;
+    }
+    const family = interaction.options.getString('model');
+    const effort = interaction.options.getString('effort');
+    if (family === null && effort === null) {
+      const current = modelSettings.current();
+      await interaction.reply({
+        content: `モデル: ${current.model}\nEffort: ${current.effort}\nこのサーバーの全対象チャンネルへ適用します。`,
+      });
+      return;
+    }
+    if (
+      (family !== null && !Object.hasOwn(CLAUDE_MODELS, family)) ||
+      (effort !== null && !EFFORT_LEVELS.includes(effort))
+    ) {
+      await interaction.reply({
+        content: 'モデルはhaiku/sonnet、effortはlow/medium/high/xhigh/maxから選んでください。',
+        ...ephemeral,
+      });
+      return;
+    }
+    await interaction.deferReply();
+    let settings;
+    try {
+      settings = await modelSettings.update({ family, effort });
+    } catch (error) {
+      logger.warn(
+        { event: 'model_settings_failed', error: error.message },
+        'model settings failed',
+      );
+      await interaction.editReply(
+        '設定を変更できませんでした。現在のモデルとeffortを維持しています。時間を置いて再試行してください。',
+      );
+      return;
+    }
+    try {
+      database.addAuditEvent({
+        eventId: randomUUID(),
+        actorId: interaction.user.id,
+        guildId: interaction.guildId,
+        channelId: interaction.channelId,
+        action: 'ai-model',
+        metadata: settings,
+      });
+    } catch (error) {
+      logger.warn(
+        { event: 'model_settings_audit_failed', error: error.message },
+        'model settings audit failed',
+      );
+    }
+    await interaction.editReply(
+      changeCallout(
+        '⚙️ Claudeの設定を変更しました',
+        '次のAPI呼び出しから、サーバー内の全対象チャンネルへ適用します。再起動後も引き継ぎます。',
+        {
+          fields: [
+            { name: 'モデル', value: settings.model, inline: true },
+            { name: 'Effort', value: settings.effort, inline: true },
+          ],
+        },
+      ),
+    );
     return;
   }
 

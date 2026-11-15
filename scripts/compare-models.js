@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { OllamaClient } from '../src/ai/ollama-client.js';
+import { ClaudeClient } from '../src/ai/claude-client.js';
 import { loadConfig } from '../src/config/load-config.js';
 
 const { config } = loadConfig();
@@ -49,12 +49,10 @@ const boundaryCases = [
 ];
 
 for (const candidate of candidates) {
-  const model = new OllamaClient({
+  const model = new ClaudeClient({
     ...config.llm,
     model: candidate,
     maxOutputTokens: 180,
-    temperature: 0,
-    keepAlive: '2m',
   });
   const started = performance.now();
   const cases = [];
@@ -73,7 +71,6 @@ for (const candidate of candidates) {
         },
       ],
       format: boundaryFormat,
-      temperature: 0,
     });
     let parsed;
     try {
@@ -103,7 +100,6 @@ for (const candidate of candidates) {
         content: 'USER1: サーバー再起動したら全部直る説\nUSER2: 腰痛も？\nこの流れへ短く返して。',
       },
     ],
-    temperature: 0.4,
   });
   process.stdout.write(
     `${JSON.stringify({

@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { OllamaClient } from '../src/ai/ollama-client.js';
+import { ClaudeClient } from '../src/ai/claude-client.js';
 import { loadConfig } from '../src/config/load-config.js';
 import { ContextBuilder } from '../src/conversation/context-builder.js';
 import { ConversationOrchestrator } from '../src/conversation/orchestrator.js';
@@ -13,7 +13,7 @@ import { SearxngSearchProvider } from '../src/tools/web-search.js';
 
 const { config } = loadConfig();
 const logger = createLogger('warn');
-const model = new OllamaClient(config.llm);
+const model = new ClaudeClient(config.llm);
 const databasePath = path.join(os.tmpdir(), `discord-ai-quality-${randomUUID()}.sqlite3`);
 const database = new DatabaseStore(databasePath, config);
 database.initializeChannels();

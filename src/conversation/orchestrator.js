@@ -291,9 +291,9 @@ export class ConversationOrchestrator {
 
     const userPrompt = `${context.conversation}\n\n${modeInstruction}\n\n${styleInstruction}\n\n${webInstruction}\n\nanswerは最大${FINAL_ANSWER_MAX_CHARACTERS}文字に収め、JSON以外の文字を出さず、JSON schemaに従って返してください。`;
     const messages = [
-        { role: 'system', content: context.system },
-        { role: 'user', content: userPrompt },
-      ];
+      { role: 'system', content: context.system },
+      { role: 'user', content: userPrompt },
+    ];
     let response = await this.model.chat({
       messages,
       format: FINAL_FORMAT,
@@ -320,7 +320,6 @@ export class ConversationOrchestrator {
           ],
           format: FINAL_FORMAT,
           signal,
-          temperature: 0,
         });
         response = {
           ...retry,

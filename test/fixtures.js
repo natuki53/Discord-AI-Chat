@@ -17,13 +17,12 @@ export function validConfig() {
     },
     persona: { name: 'AI', identity: 'AIです', style: '短く答える' },
     llm: {
-      baseUrl: 'http://127.0.0.1:11434',
-      model: 'qwen3.5:4b',
+      baseUrl: 'https://api.anthropic.com',
+      model: 'claude-sonnet-5-5',
+      effort: 'medium',
       contextTokens: 8192,
       maxOutputTokens: 1024,
       timeoutMs: 60000,
-      temperature: 0.7,
-      keepAlive: '15m',
     },
     web: {
       enabled: false,

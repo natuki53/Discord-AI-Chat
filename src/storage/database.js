@@ -3,6 +3,13 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 const MIGRATION = `
+CREATE TABLE IF NOT EXISTS model_settings (
+  guild_id TEXT PRIMARY KEY,
+  model TEXT NOT NULL,
+  effort TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS channels (
   guild_id TEXT NOT NULL,
   channel_id TEXT NOT NULL,
@@ -141,6 +148,25 @@ export class DatabaseStore {
 
   quickCheck() {
     return this.db.pragma('quick_check', { simple: true });
+  }
+
+  getModelSettings(guildId) {
+    return (
+      this.db.prepare('SELECT model, effort FROM model_settings WHERE guild_id = ?').get(guildId) ??
+      null
+    );
+  }
+
+  setModelSettings(guildId, { model, effort }) {
+    this.db
+      .prepare(
+        `
+      INSERT INTO model_settings (guild_id, model, effort, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(guild_id) DO UPDATE SET
+        model = excluded.model, effort = excluded.effort, updated_at = excluded.updated_at
+    `,
+      )
+      .run(guildId, model, effort, new Date().toISOString());
   }
 
   initializeChannels() {

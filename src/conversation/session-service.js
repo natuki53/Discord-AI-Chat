@@ -162,7 +162,6 @@ export class SessionService {
           },
         ],
         format: TOPIC_BOUNDARY_FORMAT,
-        temperature: 0,
         signal,
       });
       const decision = JSON.parse(response.content);
@@ -245,7 +244,6 @@ export class SessionService {
           { role: 'user', content: transcript },
         ],
         format,
-        temperature: 0.2,
       });
       const summary = JSON.parse(response.content);
       this.database.saveSessionSummary(

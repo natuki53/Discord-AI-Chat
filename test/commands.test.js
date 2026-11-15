@@ -25,7 +25,7 @@ function assertRequiredOptionsFirst(options = [], path = '') {
 
 test('Discord command定義は登録可能なoption順である', () => {
   const commands = commandDefinitions();
-  assert.equal(commands.length, 11);
+  assert.equal(commands.length, 13);
   assert.ok(commands.some((command) => command.name === 'ai-topic-reset'));
   for (const command of commands) {
     assertRequiredOptionsFirst(command.options, command.name);
@@ -44,7 +44,7 @@ function createServices() {
         adminRoleIds: [],
         channels: [{ id: 'channel-1' }],
       },
-      llm: { model: 'qwen3.5:4b' },
+      llm: { model: 'claude-sonnet-5-5', effort: 'medium' },
       web: { enabled: false },
       privacy: { messageRetentionHours: 24 },
     },

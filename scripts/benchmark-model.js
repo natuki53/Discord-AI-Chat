@@ -1,9 +1,9 @@
 import { performance } from 'node:perf_hooks';
-import { OllamaClient } from '../src/ai/ollama-client.js';
+import { ClaudeClient } from '../src/ai/claude-client.js';
 import { loadConfig } from '../src/config/load-config.js';
 
 const { config } = loadConfig();
-const model = new OllamaClient(config.llm);
+const model = new ClaudeClient(config.llm);
 const prompts = [
   '日本語で一文だけ自己紹介してください。',
   'U1: サーバー再起動したら全部直る説\nU2: 腰痛も？\nこのネタに短く乗ってください。',
@@ -14,7 +14,6 @@ for (const [index, prompt] of prompts.entries()) {
   const start = performance.now();
   const response = await model.chat({
     messages: [{ role: 'user', content: prompt }],
-    temperature: 0.2,
   });
   const durationMs = Math.round(performance.now() - start);
   process.stdout.write(

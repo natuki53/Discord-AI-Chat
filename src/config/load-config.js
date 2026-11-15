@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { z } from 'zod';
+import { CLAUDE_MODELS, EFFORT_LEVELS } from '../ai/model-settings.js';
 
 const snowflake = z.string().regex(/^\d{17,20}$/, 'Discord IDは17〜20桁の文字列で指定してください');
 
@@ -33,14 +34,22 @@ export const configSchema = z
       style: z.string().min(1).max(2000),
     }),
     llm: z.object({
-      baseUrl: z.url(),
-      model: z.string().min(1),
+      baseUrl: z.literal('https://api.anthropic.com').default('https://api.anthropic.com'),
+      model: z.enum(Object.values(CLAUDE_MODELS)).default(CLAUDE_MODELS.sonnet),
+      effort: z.enum(EFFORT_LEVELS).default('medium'),
       contextTokens: z.number().int().min(2048).max(32768).default(8192),
-      maxOutputTokens: z.number().int().min(32).max(2048).default(1024),
+      maxOutputTokens: z.number().int().min(32).max(32768).default(4096),
       timeoutMs: z.number().int().min(5000).max(180000).default(60000),
-      temperature: z.number().min(0).max(2).default(0.75),
-      keepAlive: z.string().default('15m'),
     }),
+    images: z
+      .object({
+        enabled: z.boolean().default(true),
+        provider: z.literal('claude-svg').default('claude-svg'),
+        maxOutputTokens: z.number().int().min(1024).max(32768).default(8192),
+        timeoutMs: z.number().int().min(10000).max(600000).default(180000),
+        cooldownSeconds: z.number().int().min(0).max(3600).default(60),
+      })
+      .prefault({}),
     web: z.object({
       enabled: z.boolean().default(false),
       provider: z.enum(['searxng', 'disabled']).default('disabled'),
@@ -83,14 +92,6 @@ export const configSchema = z
           message: 'maxDebounceMsはdebounceMs以上にしてください',
         });
       }
-    }
-
-    if (!isLoopbackUrl(config.llm.baseUrl)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['llm', 'baseUrl'],
-        message: 'MVPではOllamaのloopback URLだけを許可します',
-      });
     }
 
     if (config.web.enabled && !isLoopbackUrl(config.web.baseUrl)) {
