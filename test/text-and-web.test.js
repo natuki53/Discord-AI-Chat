@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   ConversationOrchestrator,
+  guardAssistantAnswer,
   greetingText,
   isGeneralOpinionQuestion,
   isLaughterOnly,
@@ -163,6 +164,64 @@ function mockOrchestrator(modelContent) {
     },
   });
 }
+
+test('実際のDiscord IDがある会話でも段落・箇条書き・コードの空白を保持する', async () => {
+  const answer =
+    'まず設定を確認してね。\n\n- アプリを開く\n- 設定を選ぶ\n\n```js\nconst text = "a  b";\n\n  run(text);\n```';
+  const orchestrator = mockOrchestrator(JSON.stringify({ action: 'respond', answer }));
+  const result = await orchestrator.respond(internalExposureContext('手順を教えて'), [
+    INTERNAL_EXPOSURE_MESSAGE_ID,
+  ]);
+  assert.equal(result.answer, answer);
+  assert.deepEqual(splitDiscordMessage(result.answer), [answer]);
+});
+
+test('内部ラベル・IDを除去しても前後の段落をつなげない', () => {
+  const answer = `[U1:利用者]：\r\n\r\n最初の段落。\r\n\r\n${INTERNAL_EXPOSURE_MESSAGE_ID}\r\n\r\n次の段落。`;
+  const result = guardAssistantAnswer(answer, '', [INTERNAL_EXPOSURE_MESSAGE_ID]);
+  assert.equal(result.reason, 'internal_context_marker');
+  assert.equal(result.answer, '最初の段落。\r\n\r\n\r\n\r\n次の段落。');
+});
+
+test('検索回答の本文と参照を段落で分け、参照をプレビューなしの短いリンクにする', async () => {
+  const answer = '確認できた点はこちら。[1]\n\n手続きの詳細は公式ページを確認してね。[2]';
+  const orchestrator = mockOrchestrator(JSON.stringify({ action: 'respond', answer }));
+  orchestrator.config.web.enabled = true;
+  orchestrator.config.web.maxFetchesPerTurn = 0;
+  orchestrator.searchProvider = {
+    async search() {
+      return [
+        { title: '公式ヘルプ', url: 'https://example.com/help', snippet: '手続きの説明' },
+        {
+          title: '詳細 [手順] *確認*\n続き',
+          url: 'https://example.com/help_(detail)?query=<value>',
+          snippet: '詳しい説明',
+        },
+      ];
+    },
+  };
+  const result = await orchestrator.respond(internalExposureContext('最新の手続きを調べて'), [
+    INTERNAL_EXPOSURE_MESSAGE_ID,
+  ]);
+  assert.equal(result.usedWeb, true);
+  assert.ok(result.answer.startsWith(`${answer}\n\n参照（`));
+  assert.ok(result.answer.includes('\n[1] [公式ヘルプ](<https://example.com/help>)\n[2] '));
+  assert.ok(
+    result.answer.endsWith(
+      '[2] [詳細 \\[手順\\] \\*確認\\* 続き](<https://example.com/help_(detail)?query=%3Cvalue%3E>)',
+    ),
+  );
+  assert.deepEqual(splitDiscordMessage(result.answer), [result.answer]);
+});
+
+test('今日の占いでも結果と助言の段落を保持する', async () => {
+  const answer = '今日は大吉。\n\nラッキーアイテムは青いハンカチ。';
+  const orchestrator = mockOrchestrator(JSON.stringify({ action: 'respond', answer }));
+  const result = await orchestrator.respond(internalExposureContext('今日の運勢を占って'), [
+    INTERNAL_EXPOSURE_MESSAGE_ID,
+  ]);
+  assert.equal(result.answer, answer);
+});
 
 test('内部話者labelをDiscord回答へ露出しない', async () => {
   const orchestrator = mockOrchestrator(

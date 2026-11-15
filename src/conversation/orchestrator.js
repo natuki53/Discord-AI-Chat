@@ -15,7 +15,7 @@ const FINAL_FORMAT = {
 };
 
 const SAFE_MODEL_OUTPUT_FALLBACK = 'ごめん、うまく返答を組み立てられなかった。もう一度聞いてみて。';
-const INTERNAL_SPEAKER_LABEL = /\[(?:U\d+|AI):[^\]\r\n]{1,80}\]\s*[:：]?\s*/gu;
+const INTERNAL_SPEAKER_LABEL = /\[(?:U\d+|AI):[^\]\r\n]{1,80}\][ \t]*[:：]?[ \t]*/gu;
 const PROTECTED_PROMPT_FRAGMENT =
   /INTERNAL_CANARY_[A-Z0-9_]+|重要規則\s*:|会話セッション要約\s*:|本人が明示した設定\s*:|今回の発言者が本人の同意で登録したプロフィール\s*:|<\/?(?:untrusted_|self_provided_profile_data)[^>]*>|JSON\s*schemaに従って返してください/iu;
 const INTERNAL_REQUEST_TARGET =
@@ -132,10 +132,7 @@ export function guardAssistantAnswer(answer, system = '', contextMessageIds = []
     .trim();
   for (const messageId of contextMessageIds) {
     if (!/^\d{17,20}$/u.test(messageId)) continue;
-    withoutLabels = withoutLabels
-      .replaceAll(messageId, '')
-      .replace(/\s{2,}/gu, ' ')
-      .trim();
+    withoutLabels = withoutLabels.replaceAll(messageId, '').trim();
   }
   if (!withoutLabels) {
     return { answer: SAFE_MODEL_OUTPUT_FALLBACK, reason: 'empty_after_guard' };
@@ -172,6 +169,16 @@ function buildSourceMaterial(results, pages) {
 </untrusted_web_source>`;
     })
     .join('\n\n');
+}
+
+function formatReference(result, index) {
+  const title = String(result.title).replace(/\s+/gu, ' ').trim() || '参照元';
+  const label = (title.length > 80 ? `${title.slice(0, 79)}…` : title).replace(
+    /[\\[\]`*_~|<>]/gu,
+    '\\$&',
+  );
+  const url = String(result.url).replace(/[<>\s]/gu, (character) => encodeURIComponent(character));
+  return `[${index + 1}] [${label}](<${url}>)`;
 }
 
 export function isLaughterOnly(text) {
@@ -384,7 +391,6 @@ export class ConversationOrchestrator {
       final.answer = final.answer
         .replace(/^@\S+\s*/u, '')
         .replace(/(?:明日|あした|翌日)[^。！？!\n]*(?:[。！？!]|$)/gu, '')
-        .replace(/\s{2,}/gu, ' ')
         .trim();
     }
     if (isSelfDescriptionQuestion(currentText) && final.action === 'respond') {
@@ -416,10 +422,7 @@ export class ConversationOrchestrator {
     if (final.action === 'respond') final.answer = removeDanglingJsonBrace(final.answer);
 
     if (parsedFinal.kind !== 'fallback' && final.action === 'respond' && results.length > 0) {
-      const references = results
-        .slice(0, 5)
-        .map((result, index) => `[${index + 1}] ${result.title}: ${result.url}`)
-        .join('\n');
+      const references = results.slice(0, 5).map(formatReference).join('\n');
       final.answer = `${final.answer.trim()}\n\n参照（${new Date().toLocaleDateString('ja-JP', { timeZone: this.config.timezone })}取得）\n${references}`;
     }
 
