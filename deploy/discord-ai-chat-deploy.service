@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy verified Discord AI Chat main revision
+
+[Service]
+Type=oneshot
+UMask=0077
+Environment=GIT_TERMINAL_PROMPT=0
+ExecStart=/usr/bin/python3 %h/.local/lib/discord-ai-chat-deploy/production_deploy.py --config %h/.config/discord-ai-chat-deploy/config.json
+TimeoutStartSec=15min
+TimeoutStopSec=120s
+NoNewPrivileges=true

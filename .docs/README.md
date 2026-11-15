@@ -1,5 +1,7 @@
 # Discord AI Chat 設計文書
 
+mainの保護、CIと本番への自動配備は[14-continuous-deployment.md](./14-continuous-deployment.md)を参照する。
+
 2026-11-15の[操作の整理](./13-simple-controls.md)で、コマンドを`/ai`と`/ai-image`の2種類へ統合し、本番へ反映した。現在の操作はメニューから行う。以下に残る旧コマンド名は当時の記録で、利用方法は[ルートREADME](../README.md#コマンド)を優先する。
 
 ## 1. 文書の目的

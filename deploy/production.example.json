@@ -1,0 +1,6 @@
+{
+  "repository": "natuki53/Discord-AI-Chat",
+  "app_root": "/home/natuki/discord-ai-chat",
+  "state_root": "/home/natuki/.local/state/discord-ai-chat-deploy",
+  "release_root": "/home/natuki/discord-ai-chat-deploy/automatic"
+}
