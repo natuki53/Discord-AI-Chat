@@ -146,7 +146,6 @@ ${page.text.slice(0, 4000)}
         ],
         format: PROFILE_FORMAT,
         signal,
-        temperature: 0,
       });
       const facts = parseFacts(response.content);
       sourceSummary = facts.join(' / ') || description;

@@ -9,10 +9,14 @@ if (!applicationId) throw new Error('DISCORD_APPLICATION_IDが設定されてい
 
 const { config } = loadConfig();
 const rest = new REST({ version: '10' }).setToken(token);
-const result = await rest.put(
-  Routes.applicationGuildCommands(applicationId, config.discord.guildId),
-  {
-    body: commandDefinitions(),
-  },
+const route = Routes.applicationGuildCommands(applicationId, config.discord.guildId);
+const definitions = commandDefinitions();
+const checking = process.argv.includes('--check');
+const result = checking ? await rest.get(route) : await rest.put(route, { body: definitions });
+const names = result.map((item) => item.name).sort();
+const expected = definitions.map((item) => item.name).sort();
+if (JSON.stringify(names) !== JSON.stringify(expected))
+  throw new Error('登録済みコマンドが現在の定義と一致しません。');
+process.stdout.write(
+  `${JSON.stringify({ action: checking ? 'verified' : 'registered', count: result.length, commands: names })}\n`,
 );
-process.stdout.write(`${result.length} commands registered for guild ${config.discord.guildId}\n`);

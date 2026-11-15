@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { OllamaClient } from '../src/ai/ollama-client.js';
+import { ClaudeClient } from '../src/ai/claude-client.js';
 import { loadConfig } from '../src/config/load-config.js';
 import { ContextBuilder } from '../src/conversation/context-builder.js';
 import { ConversationOrchestrator } from '../src/conversation/orchestrator.js';
@@ -12,8 +12,10 @@ import { DatabaseStore } from '../src/storage/database.js';
 import { SearxngSearchProvider } from '../src/tools/web-search.js';
 
 const { config } = loadConfig();
+// 既存環境のall指定を引き継がず、人工会話は標準の参加方針で評価する。
+for (const channel of config.discord.channels) channel.mode = 'ambient';
 const logger = createLogger('warn');
-const model = new OllamaClient(config.llm);
+const model = new ClaudeClient(config.llm);
 const databasePath = path.join(os.tmpdir(), `discord-ai-quality-${randomUUID()}.sqlite3`);
 const database = new DatabaseStore(databasePath, config);
 database.initializeChannels();
@@ -38,7 +40,7 @@ const searchProvider = config.web.enabled ? new SearxngSearchProvider(config.web
 const orchestrator = new ConversationOrchestrator({ model, searchProvider, config, logger });
 
 let sequence = 0;
-async function turn(content) {
+async function turn(content, { direct = true } = {}) {
   sequence += 1;
   const messageId = `quality-user-${sequence}`;
   const createdAt = new Date(Date.now() + sequence * 1000).toISOString();
@@ -56,6 +58,7 @@ async function turn(content) {
       authorType: 'human',
       content,
       replyToMessageId: null,
+      mentionedBot: direct,
       createdAt,
     },
     config.privacy.messageRetentionHours,
@@ -64,22 +67,28 @@ async function turn(content) {
   const context = contextBuilder.build({ guildId, channelId, sourceMessageIds: [messageId] });
   const result = await orchestrator.respond(context, [messageId]);
   const responseId = `quality-bot-${sequence}`;
-  database.ingestMessage(
-    {
-      messageId: responseId,
-      guildId,
-      channelId,
-      sessionId: context.sessionId,
-      authorId: 'quality-bot',
-      authorName: 'AI Chat',
-      authorType: 'bot',
-      content: result.answer,
-      replyToMessageId: null,
-      createdAt: new Date(Date.now() + sequence * 1000 + 500).toISOString(),
-    },
-    config.privacy.messageRetentionHours,
-  );
-  return { answer: result.answer.trim(), usedWeb: result.usedWeb, sessionId: context.sessionId };
+  if (result.action === 'respond')
+    database.ingestMessage(
+      {
+        messageId: responseId,
+        guildId,
+        channelId,
+        sessionId: context.sessionId,
+        authorId: 'quality-bot',
+        authorName: 'AI Chat',
+        authorType: 'bot',
+        content: result.answer,
+        replyToMessageId: null,
+        createdAt: new Date(Date.now() + sequence * 1000 + 500).toISOString(),
+      },
+      config.privacy.messageRetentionHours,
+    );
+  return {
+    action: result.action,
+    answer: result.answer.trim(),
+    usedWeb: result.usedWeb,
+    sessionId: context.sessionId,
+  };
 }
 
 try {
@@ -90,7 +99,7 @@ try {
     input: 'ギャンブルしてる人ってどう思う？',
     ...(await turn('ギャンブルしてる人ってどう思う？')),
   });
-  turns.push({ input: 'www', ...(await turn('www')) });
+  turns.push({ input: 'www', ...(await turn('www', { direct: false })) });
   turns.push({ input: '今日の運勢を占って', ...(await turn('今日の運勢を占って')) });
 
   try {
@@ -103,6 +112,7 @@ try {
       throw new Error('profile_answer_has_meta_disclaimer');
     }
     if (turns[3].answer.length > 40) throw new Error('laughter_response_too_long');
+    if (turns[3].action !== 'silent') throw new Error('laughter_should_be_silent');
     if (/意味|おそらく|説明/u.test(turns[3].answer)) throw new Error('laughter_overexplained');
     if (/それより|ところで|VRChat|ツール|開発/u.test(turns[3].answer)) {
       throw new Error('laughter_changed_topic');

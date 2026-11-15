@@ -51,6 +51,8 @@ test('ContextBuilderは今回の発言者の本人登録profileだけを渡す',
   const database = {
     getChannel: () => ({ activeSessionId: 'session-1', mode: 'all', version: 1 }),
     getSession: () => ({ sessionId: 'session-1', summary: null }),
+    getMessagesByIds: () => [],
+    getLastBotMessage: () => null,
     getRecentMessages: () => [
       {
         messageId: 'm1',
@@ -100,6 +102,8 @@ test('ContextBuilderは今回の発言者の本人登録profileだけを渡す',
 test('本人情報と無関係な質問ではprofileを参照しない', () => {
   assert.equal(shouldUseProfileContext('私ってどんな人だと思う？'), true);
   assert.equal(shouldUseProfileContext('私向けのゲームをおすすめして'), true);
+  assert.equal(shouldUseProfileContext('私のこと覚えてる？'), true);
+  assert.equal(shouldUseProfileContext('俺の活動って知ってる？'), true);
   assert.equal(shouldUseProfileContext('ギャンブルしてる人ってどう思う？'), false);
   assert.equal(shouldUseProfileContext('www'), false);
 });

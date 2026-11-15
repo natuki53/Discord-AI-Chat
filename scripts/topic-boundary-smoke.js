@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { OllamaClient } from '../src/ai/ollama-client.js';
+import { ClaudeClient } from '../src/ai/claude-client.js';
 import { loadConfig } from '../src/config/load-config.js';
 import { ContextBuilder } from '../src/conversation/context-builder.js';
 import { SessionService } from '../src/conversation/session-service.js';
@@ -11,7 +11,7 @@ import { DatabaseStore } from '../src/storage/database.js';
 
 const { config } = loadConfig();
 const logger = createLogger('warn');
-const model = new OllamaClient(config.llm);
+const model = new ClaudeClient(config.llm);
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'discord-ai-topic-'));
 const database = new DatabaseStore(path.join(directory, 'topic.sqlite3'), config);
 database.initializeChannels();

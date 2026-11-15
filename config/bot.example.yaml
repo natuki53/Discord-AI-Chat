@@ -6,7 +6,7 @@ discord:
   adminRoleIds: []
   channels:
     - id: '000000000000000001'
-      mode: all
+      mode: ambient
       debounceMs: 2500
       maxDebounceMs: 8000
       sessionIdleMinutes: 15
@@ -21,13 +21,19 @@ persona:
     個人攻撃や嫌がらせには加勢せず、不確かな事実を断定しないでください。
 
 llm:
-  baseUrl: http://127.0.0.1:11434
-  model: qwen3.5:9b
+  baseUrl: https://api.anthropic.com
+  model: claude-sonnet-5-5
+  effort: medium
   contextTokens: 8192
-  maxOutputTokens: 1024
+  maxOutputTokens: 4096
   timeoutMs: 60000
-  temperature: 0.75
-  keepAlive: 15m
+
+images:
+  enabled: true
+  provider: claude-svg
+  maxOutputTokens: 8192
+  timeoutMs: 180000
+  cooldownSeconds: 60
 
 web:
   enabled: true
@@ -51,3 +57,7 @@ conversation:
   topicBoundaryLookbackMessages: 12
   maxResponseCharacters: 1800
   globalConcurrency: 1
+  ambientCooldownSeconds: 20
+  ambientMaxAgeSeconds: 45
+  directRequestMaxAgeSeconds: 180
+  maxPendingMessages: 50

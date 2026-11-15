@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Discord AI Chat main for verified updates
+
+[Timer]
+OnBootSec=60s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+RandomizedDelaySec=10s
+Unit=discord-ai-chat-deploy.service
+
+[Install]
+WantedBy=timers.target

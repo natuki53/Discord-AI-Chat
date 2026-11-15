@@ -1,5 +1,9 @@
 # 会話・コンテキスト・適応 詳細設計
 
+2026-11-12改訂: 参加判断・沈黙・投稿前の再評価を実装した。[実装記録](./11-group-chat-implementation.md)に現在の挙動と確認範囲を記載する。旧GPU向けの予算例や初期の話題分離手順は現行コードと改訂要件を照合する。
+
+2026-11-14改訂、11月15日本番反映: [話者・参照先の改善](./12-conversation-context.md)を実装した。以下の番号順ラベル・固定予算例は初期案で、現在はsession内で固定の匿名ラベルと実際の文脈量に基づく履歴予算を使う。保持期間内の以前の会話は、名前や続きへの言及があるときだけ限定参照する。
+
 ## 1. 目的
 
 AIが単発の質問応答装置ではなく、チャンネル内の一参加者として次を理解するための設計を定める。
@@ -38,7 +42,7 @@ Threadのsummaryやqueueを親channelと分離する。親channelの直近数件
 
 ### 3.2 Turn
 
-`Turn` はAIが1回の判断・応答を行う最小単位である。
+`Turn`はAIが参加するかを1回判断する単位である。受信した発言群をまとめるが、その全件へ一つずつ答える必要はない。返答0回も正常終了とする。
 
 ```js
 /**
@@ -59,7 +63,7 @@ Threadのsummaryやqueueを親channelと分離する。親channelの直近数件
 
 `Session` は同じ話題の会話を要約する単位である。次のいずれかで新sessionを開始する。
 
-- 最終人間メッセージから15分以上経過。
+- 最終人間メッセージから15分以上経過。ただし、保持期間内の同じsessionへのreplyや明示的な続きは維持する。
 - 管理者が `/ai-context-reset` または `/ai-topic-reset` を実行。
 - Threadが変わった。
 - 明確な話題転換表現があり、現在summaryとの重なりが低い。
@@ -76,7 +80,7 @@ Threadのsummaryやqueueを親channelと分離する。親channelの直近数件
 1. 単一の`relation`が`new_topic`。
 2. `confidence >= 0.80`。
 
-判定本文は非信頼データとして区切り、本文中の命令には従わない。JSON不正、timeout、低confidenceではfail-openとして現在sessionを維持する。境界成立時はSQLite transactionで今回の人間メッセージと、その判定中に到着した後続の未処理メッセージを新sessionへ移し、その後にContextBuilderを実行する。このため回答生成側へ旧sessionのsummaryと発言は渡らない。ContextBuilderは今回のturnで最後のsource messageより後に到着した発言を除外し、未来の発言が現在の回答へ混ざることも防ぐ。
+判定本文は非信頼データとして区切り、本文中の命令には従わない。JSON不正、timeout、低confidenceでは現在sessionを維持する。会話Botは参加すると判断した単一の宛先のターンについて話題分離を行い、分類中に新着があれば分割を見送る。回答対象と混在する別の宛先を一括移動しない。ContextBuilderの通常の過去snapshotでは対象より後を除外し、会話Botの参加判断・再評価では`includeNewer: true`で後続発言も渡す。後続は`LATEST`と明示し、直接の返答対象とは区別する。
 
 ## 4. メッセージ正規化
 
@@ -135,12 +139,14 @@ Web検索を行う場合はrecent messagesを最大2,000へ縮め、Web本文枠
 
 ### 6.1 更新タイミング
 
+更新条件は人間の発言量と文脈予算に基づき、AIの投稿成功から切り離す。沈黙したターンでも更新判定を行う。AI自身がすでに説明した内容と未解決の明示依頼も必要な範囲で要約し、同じ説明の再投稿を防ぐ。
+
 - session内の新規人間メッセージが12件増えたとき。
 - recent messagesが3,000 token枠の80%を超えたとき。
 - topic boundary判定前。
 - graceful shutdown前にdirty sessionがあるとき。
 
-毎メッセージでLLM要約を実行せず、GPU負荷を抑える。
+毎メッセージでLLM要約を実行せず、API使用量と直接依頼の待ち時間を抑える。
 
 ### 6.2 Summary schema
 
@@ -263,40 +269,42 @@ U3: 腰痛も？
 
 公開ページは既存のSSRF防御、redirect再検証、timeout、本文サイズ制限を通して取得する。LLMへ渡す際は非信頼資料として囲み、ページに明記された活動・作品・趣味・関心だけを短く抽出する。性格、能力評価、保護属性、健康、政治・宗教、人間関係、心理状態は、ページに記載があってもprofile要約へ保存しない。
 
-会話contextへ入れるのは「私ってどんな人」「私向けのおすすめ」のように本人情報が必要なターンの発言者本人だけとし、通常の質問ではprofileをモデルへ渡さない。本人が話題にしていない内容を公開回答で列挙せず、`/ai-profile reset`または`/ai-forget`で即時削除する。
+会話contextへ入れるのは「私ってどんな人」「私向けのおすすめ」「私のこと覚えてる」「俺の活動って知ってる」のように本人情報が必要なターンの発言者本人だけとし、通常の質問ではprofileをモデルへ渡さない。本人が話題にしていない内容を公開回答で列挙せず、`/ai-profile reset`または`/ai-forget`で即時削除する。
 
 ## 9. Response decision
 
-LLMは最終文章だけでなく、まず次のstructured decisionを返す。
+本文生成の前に参加判断を行う。参加判定の出力を以下の形式へ分け、本文生成の`action`・`answer`とは独立して扱う。
 
 ```json
 {
   "action": "respond",
-  "reasonCode": "direct_question",
-  "topicChanged": false,
-  "needsWeb": false,
-  "answer": "それなら設定を一度確認しよう",
-  "confidence": 0.88
+  "reasonCode": "direct_request",
+  "targetMessageIds": ["対象メッセージID"],
+  "needsWeb": false
 }
 ```
 
 `reasonCode`:
 
-- `direct_question`
-- `mentioned`
-- `continuing_banter`
-- `useful_contribution`
-- `social_acknowledgement`
-- `conversation_between_humans`
-- `unsafe_or_private`
-- `no_useful_answer`
+- `direct_request`: AI宛の明示依頼。
+- `bot_conversation_continues`: AIの返答の続き。
+- `natural_contribution`: 場に合う冗談・感想・補足。
+- `conversation_between_humans`: 人間同士の会話。
+- `already_answered`: 人間が回答済み・解決済み。
+- `no_contribution`: 追加する発言がない。
+- `cooldown`: 自発参加の頻度制限。
+- `uncertain`: 宛先・参加可否が不明。
+
+宛先の一次情報、モード、頻度制限はアプリ側で確定する。LLMには文脈から必要な部分を判断させる。沈黙に本文は不要であり、`answer`を埋めるために相づちを生成しない。
 
 モード別規則:
 
-- `all`: 原則`respond`。空投稿、単独emoji、意味のないbot誘導などは`silent`可。
-- `ambient`: `direct_question`、`mentioned`、`continuing_banter`、高confidenceの`useful_contribution`だけ`respond`。
+- `ambient`: 標準。AI宛の依頼や続きには応じる。人間同士の会話は黙る寄りとし、自然な冗談や感想で参加する余地も認める。
 - `mention`: mentionまたはBotへのreplyがなければLLM判定前に`silent`。
-- `paused`: LLMを呼ばず`silent`。
+- `paused`: 新規本文の取り込みと応答を停止する。
+- `all`: 当面の互換・比較検証用。通常運用の推奨から外す案。
+
+自発参加の判定失敗時は沈黙する。明示依頼を判定失敗だけで黙って捨てず、安全な回答経路へ進める。本文生成の失敗時だけ必要な短い通知を行う。検索・typingは`respond`の判断後に開始する。
 
 ## 10. Prompt構造
 
@@ -321,7 +329,10 @@ RECENT CONVERSATION
   - 匿名speaker label付き発言
 
 CURRENT TURN
-  - 今回必ず処理すべき発言群
+  - 今回参加を判断する発言群、宛先、直接依頼
+
+LATEST CONVERSATION
+  - 生成後の新着、人間の先行回答、解決・撤回、最新の設定
 
 TOOL RESULTS
   - 非信頼資料、source URL、取得日時
@@ -350,8 +361,11 @@ OUTPUT CONTRACT
 一つでも該当すれば送信せず`superseded`にする。
 
 - modeが`paused`へ変更。
+- modeが`mention`へ変更され、対象がBot宛ではない。
 - source messageが削除。
+- sourceの編集・forgetで生成根拠が無効化された。
 - session IDが変化。
+- 人間がすでに回答・解決した、または依頼を取り消した。
 - 生成に45秒以上かかり、3件以上の新発言がある。
 - 新しいturnが「明確な話題転換」と判定済み。
 
@@ -359,9 +373,10 @@ OUTPUT CONTRACT
 
 1～2件の新着があるが同じ話題の場合:
 
-- 最初の1回だけ新着を追加して短く再生成する。
-- 再生成中にも新着が来たら、生成を無限にやり直さず現在回答を送るか、busy channelでは`superseded`にして次turnへ統合する。
-- `all`モードでは次turnも必ず処理されるため、無理に古い回答を投稿しない。
+- 最初の1回だけ最新の人間の発言を加え、参加の必要性を再評価する。必要な場合だけ短く再生成する。
+- 再生成後もversionと設定を再比較する。新着があるという理由だけで古い回答の送信を許可しない。
+- 更新が続いて最新状態を確保できなければ、自発参加は取り下げる。直接依頼は期限内の未解決依頼として次の判断へ引き継ぐ。
+- 投稿順を守るために古い雑談へ順番に返答しない。
 
 ## 12. Context resetと削除
 

@@ -1,4 +1,6 @@
-import { OllamaClient } from '../src/ai/ollama-client.js';
+import { ClaudeClient } from '../src/ai/claude-client.js';
+import { ModelSettingsService } from '../src/ai/model-settings.js';
+import { renderSvg } from '../src/ai/svg-renderer.js';
 import { loadConfig } from '../src/config/load-config.js';
 import { openDatabase } from '../src/storage/database.js';
 import { SearxngSearchProvider } from '../src/tools/web-search.js';
@@ -29,13 +31,23 @@ if (config) {
     database.initializeChannels();
     return database.quickCheck();
   });
+  await check('image-renderer', async () => {
+    if (!config.images.enabled) return 'disabled';
+    const png = await renderSvg(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#fff"/></svg>',
+    );
+    if (png.subarray(1, 4).toString() !== 'PNG') throw new Error('PNG renderer failed');
+    return 'claude-svg (PNG/SVG ready)';
+  });
 }
 
 if (!offline && config) {
-  await check('ollama', async () => {
-    const health = await new OllamaClient(config.llm).health();
+  await check('claude', async () => {
+    const model = new ClaudeClient(config.llm);
+    if (database) new ModelSettingsService({ config, database, model });
+    const health = await model.health();
     if (!health.ok) throw new Error(`model not found: ${config.llm.model}`);
-    return config.llm.model;
+    return `${config.llm.model} (effort: ${config.llm.effort})`;
   });
   if (config.web.enabled && config.web.provider === 'searxng') {
     await check('web-search', async () => {

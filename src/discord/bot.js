@@ -3,8 +3,24 @@ import { Client, GatewayIntentBits, MessageType, Partials } from 'discord.js';
 import { channelConfig } from '../config/load-config.js';
 import { sanitizeDisplayName, splitDiscordMessage } from '../shared/text.js';
 import { handleCommand } from './commands.js';
+import { hasExplicitBotMention, isDirectMessage } from '../conversation/participation-policy.js';
 
 const ACCEPTED_MESSAGE_TYPES = new Set([MessageType.Default, MessageType.Reply]);
+
+export function messageTextForContext(message) {
+  const attachmentCount = message.attachments?.size ?? 0;
+  const attachmentNote =
+    attachmentCount > 0 ? `[添付ファイル${attachmentCount}件: 画像やファイルの内容は未解析]` : '';
+  // 添付だけの発言も残し、「これ」への反応を存在しないテキストに結び付けない。
+  return [
+    String(message.content ?? '')
+      .trim()
+      .slice(0, attachmentNote ? 7900 : 8000),
+    attachmentNote,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
 
 export class DiscordBot {
   constructor(services) {
@@ -77,6 +93,7 @@ export class DiscordBot {
 
   async stop() {
     this.stopping = true;
+    this.services.imageService?.stop();
     await this.scheduler.shutdown(30_000);
     for (const controller of this.activeControllers) controller.abort();
     this.client.destroy();
@@ -89,6 +106,33 @@ export class DiscordBot {
     );
   }
 
+  async addressingFor(message) {
+    let replyToAuthorType = 'unknown';
+    if (message.reference?.messageId) {
+      const [stored] = this.database.getMessagesByIds(message.guildId, message.channelId, [
+        message.reference.messageId,
+      ]);
+      if (stored) replyToAuthorType = stored.authorType === 'bot' ? 'bot' : 'human';
+      else {
+        try {
+          const referenced = await message.channel.messages.fetch(message.reference.messageId);
+          replyToAuthorType =
+            referenced.author.id === this.client.user.id
+              ? 'bot'
+              : referenced.author.bot
+                ? 'other'
+                : 'human';
+        } catch {
+          // 参照できない宛先は不明として参加判定へ渡す。
+        }
+      }
+    }
+    return {
+      mentionedBot: hasExplicitBotMention(message.content, this.client.user.id),
+      replyToAuthorType,
+    };
+  }
+
   async onMessageCreate(message) {
     if (this.stopping || !this.isConfiguredMessage(message)) return;
     if (message.author.bot || message.webhookId || !ACCEPTED_MESSAGE_TYPES.has(message.type))
@@ -96,14 +140,21 @@ export class DiscordBot {
     const configured = channelConfig(this.config, message.channelId);
     const channel = this.database.getChannel(message.guildId, message.channelId);
     if (channel?.mode === 'paused') return;
-    const content = message.content.trim().slice(0, 8000);
+    const content = messageTextForContext(message);
     if (!content) return;
+    const addressing = await this.addressingFor(message);
+    if (
+      this.stopping ||
+      this.database.getChannel(message.guildId, message.channelId)?.mode === 'paused'
+    )
+      return;
 
     const session = this.sessionService.ensureSession(
       message.guildId,
       message.channelId,
       configured,
       message.createdAt,
+      { content, replyToMessageId: message.reference?.messageId ?? null },
     );
     const result = this.database.ingestMessage(
       {
@@ -117,33 +168,18 @@ export class DiscordBot {
         authorType: 'human',
         content,
         replyToMessageId: message.reference?.messageId ?? null,
+        ...addressing,
         createdAt: message.createdAt.toISOString(),
       },
       this.config.privacy.messageRetentionHours,
     );
     if (!result.isNew) return;
 
-    const effectiveMode = this.database.getChannel(message.guildId, message.channelId).mode;
-    if (effectiveMode === 'mention') {
-      let isReplyToBot = false;
-      if (message.reference?.messageId) {
-        try {
-          const referenced = await message.channel.messages.fetch(message.reference.messageId);
-          isReplyToBot = referenced.author.id === this.client.user.id;
-        } catch {
-          isReplyToBot = false;
-        }
-      }
-      if (!message.mentions.has(this.client.user) && !isReplyToBot) {
-        this.database.markMessagesProcessed([message.id]);
-        return;
-      }
-    }
-
     this.scheduler.enqueue({
       guildId: message.guildId,
       channelId: message.channelId,
       messageId: message.id,
+      priority: isDirectMessage(addressing),
     });
     this.logger.debug(
       { event: 'message_ingested', guildId: message.guildId, channelId: message.channelId },
@@ -155,10 +191,11 @@ export class DiscordBot {
     if (!this.isConfiguredMessage(message)) return;
     try {
       if (message.partial) message = await message.fetch();
-      if (message.author?.bot || !message.content) return;
+      if (message.author?.bot) return;
       this.database.updateMessage({
         messageId: message.id,
-        content: message.content.trim().slice(0, 8000),
+        content: messageTextForContext(message),
+        mentionedBot: hasExplicitBotMention(message.content, this.client.user.id),
         editedAt: message.editedAt?.toISOString() ?? new Date().toISOString(),
         guildId: message.guildId,
         channelId: message.channelId,
@@ -182,16 +219,36 @@ export class DiscordBot {
 
   async recoverUnprocessed() {
     for (const configured of this.config.discord.channels) {
-      const channel = this.database.getChannel(this.config.discord.guildId, configured.id);
-      if (channel?.mode === 'paused') continue;
-      const ids = this.database.getUnprocessedMessages(this.config.discord.guildId, configured.id);
-      for (const messageId of ids) {
-        this.scheduler.enqueue({
-          guildId: this.config.discord.guildId,
-          channelId: configured.id,
-          messageId,
-        });
-      }
+      this.recoverChannel(this.config.discord.guildId, configured.id);
+    }
+  }
+
+  recoverChannel(guildId, channelId) {
+    if (this.stopping || this.database.getChannel(guildId, channelId)?.mode === 'paused') return;
+    const ids = this.database.getUnprocessedMessages(guildId, channelId);
+    for (const message of this.database.getMessagesByIds(guildId, channelId, ids)) {
+      this.restoreAddressing(guildId, channelId, message);
+      this.scheduler.enqueue({
+        guildId,
+        channelId,
+        messageId: message.messageId,
+        priority: isDirectMessage(message),
+      });
+    }
+  }
+
+  restoreAddressing(guildId, channelId, message) {
+    const mentionedBot = hasExplicitBotMention(message.content, this.client.user.id);
+    let replyToAuthorType = message.replyToAuthorType;
+    if (replyToAuthorType === 'unknown' && message.replyToMessageId) {
+      const [reference] = this.database.getMessagesByIds(guildId, channelId, [
+        message.replyToMessageId,
+      ]);
+      if (reference) replyToAuthorType = reference.authorType === 'bot' ? 'bot' : 'human';
+    }
+    if (message.mentionedBot !== mentionedBot || message.replyToAuthorType !== replyToAuthorType) {
+      Object.assign(message, { mentionedBot, replyToAuthorType });
+      this.database.updateMessageAddressing(message.messageId, message);
     }
   }
 
@@ -200,126 +257,293 @@ export class DiscordBot {
     this.activeControllers.add(controller);
     let jobId;
     let typingTimer;
-    try {
-      await this.sessionService.maybeStartNewTopic(
-        guildId,
-        channelId,
-        messageIds,
-        controller.signal,
+    let context;
+    let decision;
+    let solicited = false;
+    let retryPending = false;
+    let firstResponseId = null;
+    const complete = (state, reasonCode) => {
+      if (jobId) this.database.finishJob(jobId, state, { discordResponseId: firstResponseId });
+      this.logger.info(
+        { event: 'participation_completed', guildId, channelId, state, reasonCode },
+        'participation completed',
       );
-      let context = this.contextBuilder.build({ guildId, channelId, sourceMessageIds: messageIds });
-      if (context.mode === 'paused') {
-        this.database.markMessagesProcessed(messageIds);
+    };
+    try {
+      if (this.stopping) {
+        retryPending = true;
         return;
       }
-      jobId = randomUUID();
-      this.database.createJob({
-        jobId,
-        guildId,
-        channelId,
-        sessionId: context.sessionId,
-        sourceMessageIds: messageIds,
-        snapshotVersion: context.snapshotVersion,
+      const initialChannel = this.database.getChannel(guildId, channelId);
+      if (!initialChannel?.activeSessionId || initialChannel.mode === 'paused') return;
+      const records = this.database
+        .getMessagesByIds(guildId, channelId, messageIds, { unprocessedOnly: true })
+        .filter((message) => message.sessionId === initialChannel.activeSessionId);
+      for (const message of records) this.restoreAddressing(guildId, channelId, message);
+      const fresh = records.filter((message) => {
+        const age = Date.now() - Date.parse(message.createdAt);
+        const ttl = isDirectMessage(message)
+          ? (this.config.conversation.directRequestMaxAgeSeconds ?? 180)
+          : (this.config.conversation.ambientMaxAgeSeconds ?? 45);
+        return age <= ttl * 1000;
       });
+      if (!fresh.length) return;
+      const sourceMessageIds = fresh.map((message) => message.messageId);
+      solicited = fresh.some(isDirectMessage);
+      let expectedSessionId = initialChannel.activeSessionId;
+      let discordChannel;
 
-      const discordChannel = await this.client.channels.fetch(channelId);
-      if (!discordChannel?.isTextBased() || !('send' in discordChannel)) {
-        throw new Error('discord_channel_not_sendable');
-      }
-      await discordChannel.sendTyping();
-      typingTimer = setInterval(() => discordChannel.sendTyping().catch(() => {}), 8000);
-
-      let result = await this.orchestrator.respond(context, messageIds, controller.signal);
-      let currentChannel = this.database.getChannel(guildId, channelId);
-      if (
-        currentChannel.mode === 'paused' ||
-        currentChannel.activeSessionId !== context.sessionId
-      ) {
-        this.database.finishJob(jobId, 'superseded');
-        this.database.markMessagesProcessed(messageIds);
-        return;
-      }
-      if (currentChannel.version !== context.snapshotVersion) {
-        context = this.contextBuilder.build({ guildId, channelId, sourceMessageIds: messageIds });
-        result = await this.orchestrator.respond(context, messageIds, controller.signal);
-        currentChannel = this.database.getChannel(guildId, channelId);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const channel = this.database.getChannel(guildId, channelId);
         if (
-          currentChannel.mode === 'paused' ||
-          currentChannel.activeSessionId !== context.sessionId
+          this.stopping ||
+          channel.mode === 'paused' ||
+          channel.activeSessionId !== expectedSessionId
         ) {
-          this.database.finishJob(jobId, 'superseded');
-          this.database.markMessagesProcessed(messageIds);
+          if (this.stopping) retryPending = solicited;
+          complete('superseded', 'inactive');
           return;
         }
-      }
-
-      if (result.action === 'silent' || !result.answer.trim()) {
-        this.database.finishJob(jobId, 'posted');
-        this.database.markMessagesProcessed(messageIds);
-        return;
-      }
-
-      const chunks = splitDiscordMessage(
-        result.answer,
-        Math.min(this.config.conversation.maxResponseCharacters, 1900),
-      );
-      let firstResponseId = null;
-      for (const chunk of chunks) {
-        const sent = await discordChannel.send({ content: chunk, allowedMentions: { parse: [] } });
-        firstResponseId ??= sent.id;
-        this.database.ingestMessage(
+        const remaining = this.database.getMessagesByIds(guildId, channelId, sourceMessageIds);
+        if (remaining.length !== sourceMessageIds.length) {
+          complete('superseded', 'source_removed');
+          return;
+        }
+        context = this.contextBuilder.build({
+          guildId,
+          channelId,
+          sourceMessageIds,
+          includeNewer: true,
+        });
+        decision = await this.orchestrator.decideParticipation(
+          context,
+          sourceMessageIds,
+          controller.signal,
           {
-            messageId: sent.id,
+            revalidate: attempt > 0,
+            previousDecision: decision,
+          },
+        );
+        solicited ||= decision.solicited;
+
+        // 別宛先の発言が混在するときは、一括で別sessionへ移さない。
+        if (
+          attempt === 0 &&
+          decision.action === 'respond' &&
+          !context.laterMessages.length &&
+          decision.targetMessageIds.length === sourceMessageIds.length
+        ) {
+          await this.sessionService.maybeStartNewTopic(
+            guildId,
+            channelId,
+            sourceMessageIds,
+            controller.signal,
+          );
+          const afterTopic = this.database.getChannel(guildId, channelId);
+          if (afterTopic.activeSessionId !== expectedSessionId) {
+            const moved = this.database.getMessagesByIds(guildId, channelId, sourceMessageIds);
+            if (
+              moved.length !== sourceMessageIds.length ||
+              !moved.every((message) => message.sessionId === afterTopic.activeSessionId)
+            ) {
+              complete('superseded', 'session_changed');
+              return;
+            }
+            expectedSessionId = afterTopic.activeSessionId;
+            context = this.contextBuilder.build({
+              guildId,
+              channelId,
+              sourceMessageIds,
+              includeNewer: true,
+            });
+            decision = await this.orchestrator.decideParticipation(
+              context,
+              sourceMessageIds,
+              controller.signal,
+              { previousDecision: decision },
+            );
+          }
+        }
+        if (!jobId) {
+          jobId = randomUUID();
+          this.database.createJob({
+            jobId,
             guildId,
             channelId,
             sessionId: context.sessionId,
-            authorId: this.client.user.id,
-            authorName: this.client.user.username,
-            authorType: 'bot',
-            content: chunk,
-            replyToMessageId: null,
-            createdAt: sent.createdAt.toISOString(),
-          },
-          this.config.privacy.messageRetentionHours,
-        );
-      }
-      this.database.finishJob(jobId, 'posted', { discordResponseId: firstResponseId });
-      this.database.markMessagesProcessed(messageIds);
-      this.logger.info(
-        {
-          event: 'response_posted',
+            sourceMessageIds,
+            snapshotVersion: context.snapshotVersion,
+          });
+        }
+        if (decision.action === 'silent') {
+          retryPending = decision.solicited && decision.reasonCode === 'uncertain';
+          complete(retryPending ? 'superseded' : 'silent', decision.reasonCode);
+          return;
+        }
+
+        const latest = this.database.getChannel(guildId, channelId);
+        if (latest.version !== context.snapshotVersion) {
+          if (attempt === 0) continue;
+          retryPending = solicited;
+          complete('superseded', 'activity_changed');
+          return;
+        }
+        context = this.contextBuilder.build({
           guildId,
           channelId,
-          sourceMessageCount: messageIds.length,
-          usedWeb: result.usedWeb,
-          promptTokens: result.promptTokens,
-          outputTokens: result.outputTokens,
-          latencyMs: Math.round(result.totalDurationNs / 1_000_000),
-        },
-        'response posted',
-      );
-      await this.sessionService.maybeRefreshSummary(context.sessionId);
+          sourceMessageIds: decision.targetMessageIds,
+          includeNewer: true,
+        });
+        discordChannel ??= await this.client.channels.fetch(channelId);
+        if (!discordChannel?.isTextBased() || !('send' in discordChannel))
+          throw new Error('discord_channel_not_sendable');
+        if (!typingTimer) {
+          await discordChannel.sendTyping();
+          typingTimer = setInterval(() => discordChannel.sendTyping().catch(() => {}), 8000);
+        }
+
+        const result = await this.orchestrator.respond(
+          context,
+          decision.targetMessageIds,
+          controller.signal,
+          decision,
+        );
+        const current = this.database.getChannel(guildId, channelId);
+        if (
+          this.stopping ||
+          current.mode === 'paused' ||
+          current.activeSessionId !== expectedSessionId ||
+          this.database.getMessagesByIds(guildId, channelId, decision.targetMessageIds).length !==
+            decision.targetMessageIds.length
+        ) {
+          if (this.stopping) retryPending = solicited;
+          complete('superseded', 'inactive');
+          return;
+        }
+        if (
+          current.version !== context.snapshotVersion ||
+          current.contextRevision !== context.snapshotRevision
+        ) {
+          if (attempt === 0) continue;
+          retryPending = solicited;
+          complete('superseded', 'activity_changed');
+          return;
+        }
+        if (result.action === 'silent' || !result.answer.trim()) {
+          complete('silent', 'no_contribution');
+          return;
+        }
+
+        const chunks = splitDiscordMessage(
+          result.answer,
+          Math.min(this.config.conversation.maxResponseCharacters, 1900),
+        );
+        let postVersion = current.version;
+        for (const chunk of chunks) {
+          const beforeSend = this.database.getChannel(guildId, channelId);
+          if (
+            this.stopping ||
+            beforeSend.version !== postVersion ||
+            beforeSend.mode !== context.mode ||
+            beforeSend.activeSessionId !== context.sessionId
+          ) {
+            complete(firstResponseId ? 'posted' : 'superseded', 'activity_changed');
+            return;
+          }
+          const sent = await discordChannel.send({
+            content: chunk,
+            allowedMentions: { parse: [] },
+          });
+          firstResponseId ??= sent.id;
+          this.database.ingestMessage(
+            {
+              messageId: sent.id,
+              guildId,
+              channelId,
+              sessionId: context.sessionId,
+              authorId: this.client.user.id,
+              authorName: this.client.user.username,
+              authorType: 'bot',
+              content: chunk,
+              replyToMessageId:
+                decision.targetMessageIds.length === 1 ? decision.targetMessageIds[0] : null,
+              createdAt: sent.createdAt.toISOString(),
+            },
+            this.config.privacy.messageRetentionHours,
+          );
+          // 送信待ち中の人間の新着まで「自分の更新」として受け入れない。
+          postVersion += 1;
+        }
+        complete('posted', decision.reasonCode);
+        this.logger.info(
+          {
+            event: 'response_posted',
+            guildId,
+            channelId,
+            sourceMessageCount: sourceMessageIds.length,
+            usedWeb: result.usedWeb,
+            promptTokens: result.promptTokens,
+            outputTokens: result.outputTokens,
+            latencyMs: Math.round(result.totalDurationNs / 1_000_000),
+          },
+          'response posted',
+        );
+        return;
+      }
     } catch (error) {
-      if (jobId) this.database.finishJob(jobId, 'failed_permanent', { errorCategory: error.name });
-      this.database.markMessagesProcessed(messageIds);
+      if (this.stopping && solicited && !firstResponseId) retryPending = true;
+      if (jobId)
+        this.database.finishJob(jobId, firstResponseId ? 'posted' : 'failed_permanent', {
+          discordResponseId: firstResponseId,
+          errorCategory: error.name,
+        });
       this.logger.error(
         { event: 'turn_failed', guildId, channelId, error: error.message },
         'turn failed',
       );
       try {
+        const latest = this.database.getChannel(guildId, channelId);
+        if (
+          !solicited ||
+          firstResponseId ||
+          this.stopping ||
+          !context ||
+          latest.mode === 'paused' ||
+          latest.activeSessionId !== context.sessionId ||
+          latest.version !== context.snapshotVersion ||
+          latest.contextRevision !== context.snapshotRevision
+        )
+          return;
+        this.lastFailureNotices ??= new Map();
+        if (Date.now() - (this.lastFailureNotices.get(channelId) ?? 0) < 60000) return;
         const discordChannel = await this.client.channels.fetch(channelId);
         if (discordChannel?.isTextBased() && 'send' in discordChannel) {
           await discordChannel.send({
             content: 'ごめん、今ちょっと応答を作れなかった。少ししてからもう一度話しかけてみて。',
             allowedMentions: { parse: [] },
           });
+          this.lastFailureNotices.set(channelId, Date.now());
         }
       } catch {
         // Discord側も失敗している場合はログだけに留める。
       }
     } finally {
       if (typingTimer) clearInterval(typingTimer);
-      this.activeControllers.delete(controller);
+      if (!retryPending) this.database.markMessagesProcessed(messageIds);
+      try {
+        const active = this.database.getChannel(guildId, channelId);
+        if (!this.stopping && active?.activeSessionId && active.mode !== 'paused') {
+          await this.sessionService.maybeRefreshSummary(active.activeSessionId, controller.signal);
+        }
+        this.recoverChannel(guildId, channelId);
+      } catch (error) {
+        this.logger.warn(
+          { event: 'turn_maintenance_failed', reason: error.name },
+          'turn maintenance failed',
+        );
+      } finally {
+        this.activeControllers.delete(controller);
+      }
     }
   }
 }

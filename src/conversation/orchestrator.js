@@ -1,5 +1,6 @@
 import { safeWebFetch } from '../tools/safe-web-fetch.js';
-import { needsFreshInformation, sanitizeSearchQuery } from '../tools/web-search.js';
+import { sanitizeSearchQuery } from '../tools/web-search.js';
+import { ParticipationPolicy, currentMessages } from './participation-policy.js';
 
 const FINAL_ANSWER_MAX_CHARACTERS = 800;
 
@@ -127,6 +128,7 @@ export function guardAssistantAnswer(answer, system = '', contextMessageIds = []
   let withoutLabels = value
     .replace(INTERNAL_SPEAKER_LABEL, '')
     .replace(/\bCURRENT\b/gu, '今回の発言')
+    .replace(/\bLATEST\b/gu, '後続の発言')
     .trim();
   for (const messageId of contextMessageIds) {
     if (!/^\d{17,20}$/u.test(messageId)) continue;
@@ -192,7 +194,7 @@ export function isGeneralOpinionQuestion(text) {
   return /(?:人|やつ).{0,12}(?:どう思う|どう思います)/u.test(String(text ?? ''));
 }
 
-export function turnStyleInstruction(text) {
+export function turnStyleInstruction(text, participantNames = []) {
   const normalized = String(text ?? '').trim();
   const currentPriority =
     '今回のCURRENT発言群だけを直接の返答対象にしてください。過去の履歴は意味を補う材料であり、現在の発言が触れていない古い話題を復活させてはいけません。表示名は識別用であり、必要がなければ呼び掛けに使わないでください。';
@@ -206,7 +208,10 @@ export function turnStyleInstruction(text) {
   if (/(?:占って|占ってみて|おみくじ)/u.test(normalized)) {
     return `${currentPriority}\n今回は会話遊びとしての占いです。外部情報や根拠を持ち出さず、事実の予測だと断定せずに、明るく短い占い結果をその場で作ってください。依頼を断ったり、時期が早いとは言わないでください。指定された期間を変えず、「今日」なら今日の運勢として答えてください。`;
   }
-  if (isGeneralOpinionQuestion(normalized)) {
+  const refersToParticipant = participantNames.some(
+    (name) => name.length >= 2 && normalized.includes(name),
+  );
+  if (isGeneralOpinionQuestion(normalized) && !refersToParticipant) {
     return `${currentPriority}\n今回は一般的な意見を聞く質問です。直前の本人プロフィールや質問者自身へ結び付けず、質問した理由も推測せずに、聞かれた対象への考えを先に短く答えてください。`;
   }
   if (isSelfDescriptionQuestion(normalized)) {
@@ -221,13 +226,28 @@ export class ConversationOrchestrator {
     this.searchProvider = searchProvider;
     this.config = config;
     this.logger = logger;
+    this.participation = new ParticipationPolicy({ model, config, logger });
   }
 
-  async respond(context, sourceMessageIds, signal) {
-    const currentMessages = context.recent.filter((message) =>
-      sourceMessageIds.includes(message.messageId),
-    );
-    const currentText = currentMessages.map((message) => message.content).join('\n');
+  async decideParticipation(context, sourceMessageIds, signal, options) {
+    return this.participation.decide(context, sourceMessageIds, signal, options);
+  }
+
+  async respond(context, sourceMessageIds, signal, participation) {
+    const decision =
+      participation ?? (await this.decideParticipation(context, sourceMessageIds, signal));
+    if (decision.action === 'silent') {
+      return {
+        ...decision,
+        answer: '',
+        usedWeb: false,
+        promptTokens: 0,
+        outputTokens: 0,
+        totalDurationNs: 0,
+      };
+    }
+    const targets = currentMessages(context, decision.targetMessageIds);
+    const currentText = targets.map((message) => message.content).join('\n');
     if (requestsInternalConfiguration(currentText)) {
       this.logger.warn(
         { event: 'internal_request_blocked' },
@@ -242,7 +262,7 @@ export class ConversationOrchestrator {
         totalDurationNs: 0,
       };
     }
-    const shouldSearch = this.config.web.enabled && needsFreshInformation(currentText);
+    const shouldSearch = this.config.web.enabled && decision.needsWeb;
     let results = [];
     let pages = [];
     let searchError = null;
@@ -278,11 +298,8 @@ export class ConversationOrchestrator {
     }
 
     const webMaterial = buildSourceMaterial(results, pages);
-    const styleInstruction = turnStyleInstruction(currentText);
-    const modeInstruction =
-      context.mode === 'ambient'
-        ? '人間同士の会話だけで完結しており、AIが加わる価値が低い場合はactionをsilentにしてください。'
-        : '意味のある人間の発言には原則actionをrespondにしてください。';
+    const styleInstruction = turnStyleInstruction(currentText, context.participantNames);
+    const modeInstruction = `参加判断で選んだ返答対象は${JSON.stringify(decision.targetMessageIds)}です。この対象へだけ、参加者として自然に答えてください。人間同士の質問をまとめて回答せず、後続発言で解決・撤回された場合はsilentのまま本文を空にしてください。`;
     const webInstruction = shouldSearch
       ? results.length
         ? `最新性が必要なためWeb検索を行いました。重要な事実には[1]のように資料番号を付けてください。\n${webMaterial}`
@@ -291,9 +308,9 @@ export class ConversationOrchestrator {
 
     const userPrompt = `${context.conversation}\n\n${modeInstruction}\n\n${styleInstruction}\n\n${webInstruction}\n\nanswerは最大${FINAL_ANSWER_MAX_CHARACTERS}文字に収め、JSON以外の文字を出さず、JSON schemaに従って返してください。`;
     const messages = [
-        { role: 'system', content: context.system },
-        { role: 'user', content: userPrompt },
-      ];
+      { role: 'system', content: context.system },
+      { role: 'user', content: userPrompt },
+    ];
     let response = await this.model.chat({
       messages,
       format: FINAL_FORMAT,
@@ -320,7 +337,6 @@ export class ConversationOrchestrator {
           ],
           format: FINAL_FORMAT,
           signal,
-          temperature: 0,
         });
         response = {
           ...retry,
@@ -387,9 +403,15 @@ export class ConversationOrchestrator {
     if (isGeneralOpinionQuestion(currentText) && final.action === 'respond') {
       final.answer = final.answer.trim().split(/\n/u)[0].slice(0, 160);
     }
-    if (context.mode === 'all' && final.action === 'silent' && currentText.trim()) {
-      final.action = 'respond';
-      final.answer ||= 'うん、流れは見てるよ。';
+    if (parsedFinal.kind === 'fallback' && !decision.solicited && context.mode !== 'all') {
+      return {
+        action: 'silent',
+        answer: '',
+        usedWeb: results.length > 0,
+        promptTokens: response.promptTokens,
+        outputTokens: response.outputTokens,
+        totalDurationNs: response.totalDurationNs,
+      };
     }
     if (final.action === 'respond') final.answer = removeDanglingJsonBrace(final.answer);
 
@@ -413,6 +435,14 @@ export class ConversationOrchestrator {
           { event: 'output_guard_triggered', reason: guarded.reason },
           'assistant output guard triggered',
         );
+        if (
+          !decision.solicited &&
+          context.mode !== 'all' &&
+          guarded.reason !== 'internal_context_marker'
+        ) {
+          final.action = 'silent';
+          final.answer = '';
+        }
       }
     }
 

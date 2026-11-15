@@ -1,4 +1,4 @@
-import { OllamaClient } from '../src/ai/ollama-client.js';
+import { ClaudeClient } from '../src/ai/claude-client.js';
 import { loadConfig } from '../src/config/load-config.js';
 import { ConversationOrchestrator } from '../src/conversation/orchestrator.js';
 import { createLogger } from '../src/observability/logger.js';
@@ -6,7 +6,7 @@ import { SearxngSearchProvider } from '../src/tools/web-search.js';
 
 const { config } = loadConfig();
 const logger = createLogger('warn');
-const model = new OllamaClient(config.llm);
+const model = new ClaudeClient(config.llm);
 const searchProvider = config.web.enabled ? new SearxngSearchProvider(config.web) : null;
 const orchestrator = new ConversationOrchestrator({ model, searchProvider, config, logger });
 const messageId = 'smoke-message-1';

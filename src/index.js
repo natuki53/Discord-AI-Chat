@@ -1,4 +1,7 @@
-import { OllamaClient } from './ai/ollama-client.js';
+import { ClaudeClient } from './ai/claude-client.js';
+import { ModelSettingsService } from './ai/model-settings.js';
+import { ImageGenerationService } from './ai/image-generation-service.js';
+import { ClaudeSvgClient } from './ai/claude-svg-client.js';
 import { loadConfig, channelConfig } from './config/load-config.js';
 import { ContextBuilder } from './conversation/context-builder.js';
 import { ConversationOrchestrator } from './conversation/orchestrator.js';
@@ -19,7 +22,18 @@ async function main() {
   const database = openDatabase(config);
   database.initializeChannels();
 
-  const model = new OllamaClient(config.llm);
+  const model = new ClaudeClient(config.llm);
+  const modelSettings = new ModelSettingsService({ config, database, model });
+  const imageService = new ImageGenerationService({
+    provider: config.images.enabled
+      ? new ClaudeSvgClient({
+          model,
+          maxOutputTokens: config.images.maxOutputTokens,
+          timeoutMs: config.images.timeoutMs,
+        })
+      : null,
+    cooldownSeconds: config.images.cooldownSeconds,
+  });
   const searchProvider =
     config.web.enabled && config.web.provider === 'searxng'
       ? new SearxngSearchProvider(config.web)
@@ -40,11 +54,15 @@ async function main() {
     processTurn: (turn) => bot.processTurn(turn),
     resolveChannelConfig: (channelId) => channelConfig(config, channelId),
     globalConcurrency: config.conversation.globalConcurrency,
+    maxPendingMessages: config.conversation.maxPendingMessages,
+    onOverflow: ({ messageIds }) => database.markMessagesProcessed(messageIds),
   });
   const services = {
     config,
     database,
     model,
+    modelSettings,
+    imageService,
     searchProvider,
     profileService,
     contextBuilder,
@@ -78,9 +96,9 @@ async function main() {
   process.once('SIGINT', () => shutdown('SIGINT').finally(() => process.exit(0)));
 
   const health = await model.health();
-  if (!health.ok) throw new Error(`Ollama modelが見つかりません: ${config.llm.model}`);
+  if (!health.ok) throw new Error(`Claude modelを利用できません: ${config.llm.model}`);
   logger.info(
-    { event: 'service_starting', configPath, model: config.llm.model },
+    { event: 'service_starting', configPath, model: config.llm.model, effort: config.llm.effort },
     'service starting',
   );
   await bot.start(token);

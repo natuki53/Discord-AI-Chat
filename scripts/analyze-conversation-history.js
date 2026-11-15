@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { OllamaClient } from '../src/ai/ollama-client.js';
+import { ClaudeClient } from '../src/ai/claude-client.js';
 import { loadConfig } from '../src/config/load-config.js';
 
 const ANALYSIS_FORMAT = {
@@ -56,7 +56,7 @@ try {
 
   if (!transcript) throw new Error('分析できる保存履歴がありません。');
 
-  const model = new OllamaClient(config.llm);
+  const model = new ClaudeClient(config.llm);
   const response = await model.chat({
     messages: [
       {
@@ -74,7 +74,6 @@ issuesの各要素は「問題: ... / 規則: ...」の一文にしてくださ�
       },
     ],
     format: ANALYSIS_FORMAT,
-    temperature: 0,
   });
   const analysis = JSON.parse(response.content);
   process.stdout.write(

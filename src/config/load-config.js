@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { z } from 'zod';
+import { CLAUDE_MODELS, EFFORT_LEVELS } from '../ai/model-settings.js';
+import { normalizeResponseMode } from '../conversation/response-mode.js';
 
 const snowflake = z.string().regex(/^\d{17,20}$/, 'Discord IDは17〜20桁の文字列で指定してください');
 
@@ -12,7 +14,10 @@ function isLoopbackUrl(value) {
 
 const channelSchema = z.object({
   id: snowflake,
-  mode: z.enum(['all', 'ambient', 'mention', 'paused']).default('all'),
+  mode: z
+    .enum(['all', 'ambient', 'mention', 'paused'])
+    .default('ambient')
+    .transform(normalizeResponseMode),
   debounceMs: z.number().int().min(250).max(30_000).default(2500),
   maxDebounceMs: z.number().int().min(500).max(60_000).default(8000),
   sessionIdleMinutes: z.number().int().min(1).max(1440).default(15),
@@ -33,14 +38,22 @@ export const configSchema = z
       style: z.string().min(1).max(2000),
     }),
     llm: z.object({
-      baseUrl: z.url(),
-      model: z.string().min(1),
+      baseUrl: z.literal('https://api.anthropic.com').default('https://api.anthropic.com'),
+      model: z.enum(Object.values(CLAUDE_MODELS)).default(CLAUDE_MODELS.sonnet),
+      effort: z.enum(EFFORT_LEVELS).default('medium'),
       contextTokens: z.number().int().min(2048).max(32768).default(8192),
-      maxOutputTokens: z.number().int().min(32).max(2048).default(1024),
+      maxOutputTokens: z.number().int().min(32).max(32768).default(4096),
       timeoutMs: z.number().int().min(5000).max(180000).default(60000),
-      temperature: z.number().min(0).max(2).default(0.75),
-      keepAlive: z.string().default('15m'),
     }),
+    images: z
+      .object({
+        enabled: z.boolean().default(true),
+        provider: z.literal('claude-svg').default('claude-svg'),
+        maxOutputTokens: z.number().int().min(1024).max(32768).default(8192),
+        timeoutMs: z.number().int().min(10000).max(600000).default(180000),
+        cooldownSeconds: z.number().int().min(0).max(3600).default(60),
+      })
+      .prefault({}),
     web: z.object({
       enabled: z.boolean().default(false),
       provider: z.enum(['searxng', 'disabled']).default('disabled'),
@@ -63,6 +76,10 @@ export const configSchema = z
       topicBoundaryLookbackMessages: z.number().int().min(4).max(30).default(12),
       maxResponseCharacters: z.number().int().min(100).max(1900).default(1800),
       globalConcurrency: z.number().int().min(1).max(2).default(1),
+      ambientCooldownSeconds: z.number().int().min(0).max(3600).default(20),
+      ambientMaxAgeSeconds: z.number().int().min(5).max(300).default(45),
+      directRequestMaxAgeSeconds: z.number().int().min(30).max(900).default(180),
+      maxPendingMessages: z.number().int().min(1).max(200).default(50),
     }),
   })
   .superRefine((config, context) => {
@@ -83,14 +100,6 @@ export const configSchema = z
           message: 'maxDebounceMsはdebounceMs以上にしてください',
         });
       }
-    }
-
-    if (!isLoopbackUrl(config.llm.baseUrl)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['llm', 'baseUrl'],
-        message: 'MVPではOllamaのloopback URLだけを許可します',
-      });
     }
 
     if (config.web.enabled && !isLoopbackUrl(config.web.baseUrl)) {

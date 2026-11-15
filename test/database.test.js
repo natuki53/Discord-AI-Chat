@@ -126,6 +126,78 @@ test('本人profileを保存・取得・resetできる', () => {
   });
 });
 
+test('旧allをambientへ一度だけ移行し、停止中・呼びかけ限定は維持する', () => {
+  withDatabase((database) => {
+    const guild = '123456789012345678';
+    const channel = '123456789012345679';
+    database.db
+      .prepare(
+        "UPDATE channels SET configured_mode='all', mode_override='all', previous_mode='all'",
+      )
+      .run();
+    database.initializeChannels();
+    const migrated = database.getChannel(guild, channel);
+    assert.equal(migrated.mode, 'ambient');
+    assert.equal(migrated.configuredMode, 'ambient');
+    assert.equal(migrated.previousMode, 'ambient');
+    database.initializeChannels();
+    assert.equal(database.getChannel(guild, channel).contextRevision, migrated.contextRevision);
+    database.db.prepare("UPDATE channels SET mode_override='paused', previous_mode='all'").run();
+    database.initializeChannels();
+    assert.equal(database.getChannel(guild, channel).mode, 'paused');
+    assert.equal(database.getChannel(guild, channel).previousMode, 'ambient');
+    database.setChannelMode(guild, channel, 'mention');
+    database.initializeChannels();
+    assert.equal(database.getChannel(guild, channel).mode, 'mention');
+  });
+});
+
+test('本人設定とprofileの変更・削除で生成中の文脈を無効化する', () => {
+  withDatabase((database) => {
+    const session = createSession(database);
+    const user = '323456789012345678';
+    database.ingestMessage(
+      {
+        messageId: '223456789012345670',
+        guildId: session.guildId,
+        channelId: session.channelId,
+        sessionId: session.sessionId,
+        authorId: user,
+        authorName: '本人',
+        authorType: 'human',
+        content: '私のことについて',
+        replyToMessageId: null,
+        createdAt: new Date().toISOString(),
+      },
+      24,
+    );
+    let revision = database.getChannel(session.guildId, session.channelId).contextRevision;
+    const changes = [
+      () =>
+        database.setPreference(session.guildId, user, {
+          preferredName: 'なまえ',
+          tone: 'formal',
+          responseLength: 'short',
+          banterLevel: 'normal',
+        }),
+      () =>
+        database.setProfile(session.guildId, user, {
+          selfDescription: '自己紹介',
+          links: [],
+          sourceSummary: '自己紹介',
+        }),
+      () => database.resetPreference(session.guildId, user),
+      () => database.resetProfile(session.guildId, user),
+    ];
+    for (const change of changes) {
+      change();
+      const next = database.getChannel(session.guildId, session.channelId).contextRevision;
+      assert.ok(next > revision);
+      revision = next;
+    }
+  });
+});
+
 test('topic reset後の発言は新しいsessionになる', () => {
   withDatabase((database) => {
     const config = validConfig();
