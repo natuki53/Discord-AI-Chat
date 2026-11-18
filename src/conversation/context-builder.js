@@ -292,7 +292,9 @@ ${profileLines.join('\n') || 'なし'}
     const lastBotTargets = this.database.getMessagesByIds(
       guildId,
       channelId,
-      lastBotMessage?.replyToMessageId ? [lastBotMessage.replyToMessageId] : [],
+      lastBotMessage?.sessionId === session.sessionId && lastBotMessage.replyToMessageId
+        ? [lastBotMessage.replyToMessageId]
+        : [],
     );
     return {
       system: systemPrompt,

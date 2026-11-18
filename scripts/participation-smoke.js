@@ -27,6 +27,7 @@ const rows = (items) =>
   items.map(([authorId, content, extra = {}], index) => ({
     messageId: `sample-${index + 1}`,
     authorId,
+    authorName: authorId === 'AI' ? config.persona.name : authorId,
     authorType: authorId === 'AI' ? 'bot' : 'human',
     content,
     replyToAuthorType: 'unknown',
@@ -54,6 +55,7 @@ const cases = [
     ]),
     current: [2],
     expected: 'respond',
+    expectedReason: 'bot_conversation_continues',
     botRecentlySpoke: true,
   },
   {
@@ -65,6 +67,39 @@ const cases = [
     ]),
     current: [2],
     expected: 'respond',
+    expectedReason: 'direct_request',
+  },
+  {
+    id: 'untagged_check_in',
+    messages: rows([['A', 'ねえ、今ちゃんと聞こえてる？']]),
+    current: [0],
+    expected: 'respond',
+    expectedReason: 'direct_request',
+  },
+  {
+    id: 'untagged_question',
+    messages: rows([['A', 'キャッシュって何？できれば一言で教えて']]),
+    current: [0],
+    expected: 'respond',
+    expectedReason: 'direct_request',
+  },
+  {
+    id: 'human_addressee_without_reply',
+    messages: rows([
+      ['ミナ', 'この設定なら昨日見たよ'],
+      ['A', 'ミナさん、これってどれに設定した？'],
+    ]),
+    current: [1],
+    expected: 'silent',
+  },
+  {
+    id: 'third_person_about_bot',
+    messages: rows([
+      ['B', '読み上げBotの話、あとでまとめておくね'],
+      ['A', `${config.persona.name}もたまに返事が遅いらしいね`],
+    ]),
+    current: [1],
+    expected: 'silent',
   },
   {
     id: 'already_answered',
@@ -95,6 +130,7 @@ for (const sample of cases) {
   const latestIndex = Math.max(...sample.current);
   const context = {
     mode: 'ambient',
+    sessionId: 'smoke-session',
     recent: sample.messages,
     currentMessages,
     laterMessages: sample.messages.slice(latestIndex + 1),
@@ -110,7 +146,10 @@ for (const sample of cases) {
     undefined,
     { revalidate: sample.revalidate },
   );
-  const pass = result.action === sample.expected && result.reasonCode !== 'uncertain';
+  const pass =
+    result.action === sample.expected &&
+    result.reasonCode !== 'uncertain' &&
+    (!sample.expectedReason || (result.reasonCode === sample.expectedReason && result.solicited));
   failed ||= !pass;
   console.warn(
     JSON.stringify({
@@ -123,6 +162,6 @@ for (const sample of cases) {
   );
 }
 console.warn(
-  JSON.stringify({ model: config.llm.model, requests, promptTokens, outputTokens, pass: !failed }),
+  JSON.stringify({ model: client.model, requests, promptTokens, outputTokens, pass: !failed }),
 );
 assert.ok(!failed, 'participation smoke failed');

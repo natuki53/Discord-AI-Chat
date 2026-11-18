@@ -212,6 +212,7 @@ test('GC-07/09: 新着の人間の回答を再評価へ渡し、解決済みの�
       if (request.format.properties.reasonCode) {
         const data = JSON.parse(request.messages[1].content);
         assert.equal(data.LATEST[0].content, 'その設定はOFFで解決するよ');
+        assert.deepEqual(data.previousTargetMessageIds, [data.CURRENT[0].messageId]);
         return output(decide('silent', [], 'already_answered'));
       }
       h.human('その設定はOFFで解決するよ', { authorId: 'u2', createdAt: new Date().toISOString() });
@@ -221,6 +222,24 @@ test('GC-07/09: 新着の人間の回答を再評価へ渡し、解決済みの�
   await h.run(h.human(`<@${BOT_ID}> 設定を教えて`, { mentionedBot: true }));
   assert.equal(h.calls.model.length, 2);
   assert.deepEqual(h.calls.sent, []);
+});
+
+test('おまかせでメンションなしの呼びかけと判定した発言へ返信する', async (t) => {
+  const h = harness(t, {
+    chat: async (request) => {
+      if (request.format.properties.reasonCode) {
+        const data = JSON.parse(request.messages[1].content);
+        assert.deepEqual(data.explicitBotRequestIds, []);
+        return output(decide('respond', [data.CURRENT[0].messageId], 'direct_request'));
+      }
+      assert.match(request.messages[1].content, /選んだ発言はAI宛です/u);
+      return output({ action: 'respond', answer: '聞こえてるよ。' });
+    },
+  });
+  h.human('何かあれば聞いてね。', { authorType: 'bot', authorId: BOT_ID });
+  await h.run(h.human('ねえ、今ちゃんと聞こえてる？'));
+  assert.equal(h.jobs()[0].state, 'posted');
+  assert.equal(h.calls.sent[0]?.content, '聞こえてるよ。');
 });
 
 test('GC-13: 黙った会話も要約され、その後の直接依頼で参照できる', async (t) => {
