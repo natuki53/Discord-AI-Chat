@@ -139,7 +139,10 @@ test('GC-03: 同じ人の暗黙の続きはcooldown中でも文脈から判断�
     config: {},
     logger,
     model: {
-      async chat() {
+      async chat(request) {
+        const input = JSON.parse(request.messages[1].content);
+        assert.deepEqual(input.explicitBotRequestIds, []);
+        assert.deepEqual(input.lastBotTargetAuthorIds, ['u1']);
         return reply({
           action: 'respond',
           reasonCode: 'bot_conversation_continues',

@@ -215,7 +215,10 @@ export class ConversationOrchestrator {
       };
     }
     const styleInstruction = turnStyleInstruction();
-    const modeInstruction = `参加判断で選んだ返答対象は${JSON.stringify(decision.targetMessageIds)}です。この対象へだけ、参加者として自然に答えてください。人間同士の質問をまとめて回答せず、後続発言で解決・撤回された場合はsilentのまま本文を空にしてください。`;
+    const addressedInstruction = decision.solicited
+      ? '選んだ発言はAI宛です。メンションがない発言にも、ここで宛先を判定し直さず答えてください。'
+      : '';
+    const modeInstruction = `参加判断で選んだ返答対象は${JSON.stringify(decision.targetMessageIds)}です。${addressedInstruction}この対象へだけ、参加者として自然に答えてください。人間同士の質問をまとめて回答せず、後続発言で解決・撤回された場合はsilentのまま本文を空にしてください。`;
     const basePrompt = `${context.conversation}\n\n${modeInstruction}\n\n${styleInstruction}`;
     let research;
     let webInstruction =
